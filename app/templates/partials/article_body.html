@@ -1,0 +1,127 @@
+<article class="ai-article">
+
+    <header class="article-header">
+
+        <h1>{{ article.h1 }}</h1>
+
+        {% if featured_image_url %}
+        <figure class="featured-image">
+            <img
+                src="{{ featured_image_url }}"
+                alt="{{ featured_image_alt }}"
+                loading="eager"
+                decoding="async"
+            >
+        </figure>
+        {% endif %}
+
+    </header>
+
+
+    <div class="article-introduction">
+        {{ introduction_html }}
+    </div>
+
+
+    {% if toc %}
+    <nav
+        class="table-of-contents"
+        aria-label="Table of contents"
+    >
+        <h2>Table of Contents</h2>
+
+        <ol>
+            {% for item in toc %}
+            <li>
+                <a href="#{{ item.id }}">
+                    {{ item.heading }}
+                </a>
+            </li>
+            {% endfor %}
+        </ol>
+    </nav>
+    {% endif %}
+
+
+    <div class="article-content">
+
+        {% for section in sections %}
+
+        <section id="{{ section.anchor_id }}">
+
+            <h2>{{ section.heading }}</h2>
+
+            {% for image in section.images %}
+            <figure class="section-image">
+                <img
+                    src="{{ image.url }}"
+                    alt="{{ image.alt }}"
+                    loading="lazy"
+                    decoding="async"
+                >
+            </figure>
+            {% endfor %}
+
+            {{ section.html }}
+
+        </section>
+
+        {% endfor %}
+
+    </div>
+
+
+    <section class="article-conclusion">
+
+        <h2>Conclusion</h2>
+
+        {{ conclusion_html }}
+
+    </section>
+
+
+    {% if include_sources and sources %}
+
+    <section
+        class="article-sources"
+        aria-labelledby="article-sources-heading"
+    >
+
+        <h2 id="article-sources-heading">
+            Sources
+        </h2>
+
+        <ol>
+
+            {% for source in sources %}
+
+            <li id="source-{{ source.number }}">
+
+                {% if source.is_link %}
+                <a
+                    href="{{ source.url }}"
+                    rel="noopener noreferrer"
+                >
+                    {{ source.title }}
+                </a>
+                {% else %}
+                <span>{{ source.title }}</span>
+                {% endif %}
+
+                {% if source.domain %}
+                <span>
+                    - {{ source.domain }}
+                </span>
+                {% endif %}
+
+            </li>
+
+            {% endfor %}
+
+        </ol>
+
+    </section>
+
+    {% endif %}
+
+</article>

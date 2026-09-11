@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+# Keep this to real bugs (syntax errors, unused/undefined names) —
+# not a full style migration of an already-consistent codebase.
+select = ["E9", "F"]
