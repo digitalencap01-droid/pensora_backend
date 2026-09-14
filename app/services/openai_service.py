@@ -4,7 +4,8 @@ from app.core.config import settings
 
 
 class OpenAIService:
-    def __init__(self) -> None:
+    @property
+    def client(self) -> AsyncOpenAI:
         api_key = (
             settings.openai_api_key.get_secret_value()
             if settings.openai_api_key
@@ -12,13 +13,15 @@ class OpenAIService:
         )
         if not api_key:
             api_key = "dummy_key_until_configured"
-
-        self.client = AsyncOpenAI(
+        return AsyncOpenAI(
             api_key=api_key,
             max_retries=5,
             timeout=120.0,
         )
-        self.model = settings.openai_model
+
+    @property
+    def model(self) -> str:
+        return settings.openai_model
 
 
 openai_service = OpenAIService()
