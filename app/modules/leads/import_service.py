@@ -162,9 +162,16 @@ class UniversalLeadImportService:
 
                 email = mapped_data.get("email")
                 phone = mapped_data.get("phone")
+                name_val = mapped_data.get("full_name") or f"{mapped_data.get('first_name') or ''} {mapped_data.get('last_name') or ''}".strip()
+                company_val = mapped_data.get("company_name")
 
-                # Deduplication check: check if lead with same email or phone exists in Supabase DB
-                existing = await sb_repo.find_by_email_or_phone(email, phone)
+                # Comprehensive deduplication check: email, phone, or name + company
+                existing = await sb_repo.find_existing_lead(
+                    email=email,
+                    phone=phone,
+                    name=name_val if name_val else None,
+                    company=company_val if company_val else None,
+                )
                 if existing:
                     duplicates += 1
                     if duplicate_strategy == "skip":
@@ -173,10 +180,10 @@ class UniversalLeadImportService:
                         update_payload = {
                             "first_name": mapped_data.get("first_name") or existing.first_name,
                             "last_name": mapped_data.get("last_name") or existing.last_name,
-                            "full_name": mapped_data.get("full_name") or existing.full_name,
+                            "full_name": name_val or existing.full_name,
                             "email": email or existing.email,
                             "phone": phone or existing.phone,
-                            "company_name": mapped_data.get("company_name") or existing.company_name,
+                            "company_name": company_val or existing.company_name,
                             "job_title": mapped_data.get("job_title") or existing.job_title,
                             "status": mapped_data.get("status") or existing.status,
                             "source": mapped_data.get("source") or existing.source,
