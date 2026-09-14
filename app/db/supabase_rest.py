@@ -56,6 +56,8 @@ class SupabaseRestClient:
         extra: dict | None = None,
         *,
         write: bool = False,
+        table: str | None = None,
+        schema: str | None = None,
     ) -> dict:
         key = settings.supabase_service_role_key or ""
         headers = {
@@ -64,15 +66,19 @@ class SupabaseRestClient:
             "Content-Type": "application/json",
         }
 
-        # Targets a non-default Postgres schema (e.g. "ai_blog")
-        # when PGRST_DB_SCHEMAS on the server exposes more than just
-        # "public" — see README.md. PostgREST uses different headers
-        # for reads vs. writes.
-        if settings.db_schema and settings.db_schema != "public":
+        # Determine target Postgres schema: "growth" for leads, "public" for blog content_projects & all others
+        target_schema = schema
+        if not target_schema:
+            if table == "leads":
+                target_schema = settings.db_schema or "growth"
+            else:
+                target_schema = "public"
+
+        if target_schema and target_schema != "public":
             header_name = (
                 "Content-Profile" if write else "Accept-Profile"
             )
-            headers[header_name] = settings.db_schema
+            headers[header_name] = target_schema
 
         if extra:
             headers.update(extra)
@@ -83,12 +89,13 @@ class SupabaseRestClient:
         table: str,
         *,
         params: dict | None = None,
+        schema: str | None = None,
     ) -> list[dict]:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(
                 f"{self.base_url}/{table}",
                 params=params or {},
-                headers=self._headers(),
+                headers=self._headers(table=table, schema=schema),
             )
         self._raise_for_status(response)
         return response.json()
@@ -98,9 +105,10 @@ class SupabaseRestClient:
         table: str,
         *,
         params: dict | None = None,
+        schema: str | None = None,
     ) -> dict | None:
         merged = {**(params or {}), "limit": "1"}
-        rows = await self.select(table, params=merged)
+        rows = await self.select(table, params=merged, schema=schema)
         return rows[0] if rows else None
 
     async def insert(
@@ -109,6 +117,7 @@ class SupabaseRestClient:
         data: dict | list[dict],
         *,
         on_conflict: str | None = None,
+        schema: str | None = None,
     ) -> list[dict]:
         params = {}
         prefer = "return=representation"
@@ -122,7 +131,7 @@ class SupabaseRestClient:
                 params=params,
                 json=_json_safe(data),
                 headers=self._headers(
-                    {"Prefer": prefer}, write=True
+                    {"Prefer": prefer}, write=True, table=table, schema=schema
                 ),
             )
         self._raise_for_status(response)
@@ -134,9 +143,10 @@ class SupabaseRestClient:
         data: dict,
         *,
         on_conflict: str | None = None,
+        schema: str | None = None,
     ) -> dict:
         result = await self.insert(
-            table, data, on_conflict=on_conflict
+            table, data, on_conflict=on_conflict, schema=schema
         )
         return result[0]
 
@@ -146,6 +156,7 @@ class SupabaseRestClient:
         data: dict,
         *,
         params: dict,
+        schema: str | None = None,
     ) -> list[dict]:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.patch(
@@ -155,6 +166,8 @@ class SupabaseRestClient:
                 headers=self._headers(
                     {"Prefer": "return=representation"},
                     write=True,
+                    table=table,
+                    schema=schema,
                 ),
             )
         self._raise_for_status(response)
@@ -165,12 +178,13 @@ class SupabaseRestClient:
         table: str,
         *,
         params: dict,
+        schema: str | None = None,
     ) -> None:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.delete(
                 f"{self.base_url}/{table}",
                 params=params,
-                headers=self._headers(write=True),
+                headers=self._headers(write=True, table=table, schema=schema),
             )
         self._raise_for_status(response)
 
@@ -179,6 +193,7 @@ class SupabaseRestClient:
         table: str,
         *,
         params: dict | None = None,
+        schema: str | None = None,
     ) -> int:
         merged = {
             **(params or {}),
@@ -190,7 +205,7 @@ class SupabaseRestClient:
                 f"{self.base_url}/{table}",
                 params=merged,
                 headers=self._headers(
-                    {"Prefer": "count=exact"}
+                    {"Prefer": "count=exact"}, table=table, schema=schema
                 ),
             )
         self._raise_for_status(response)
