@@ -80,7 +80,6 @@ pensora_backend/
 ├── requirements.txt                # runtime dependencies
 ├── requirements-dev.txt            # + pytest/ruff/respx for local development
 ├── alembic.ini
-├── Dockerfile
 ├── LICENSE
 ├── SECURITY.md
 └── .env.example

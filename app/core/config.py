@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # OpenAI
     # -----------------------
 
-    openai_api_key: SecretStr
+    openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-4.1-mini"
     openai_embedding_model: str = "text-embedding-3-small"
 
@@ -151,11 +151,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    cors_origins: str = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173,*"
+
     @property
     def cors_origin_list(self) -> list[str]:
+        origins = getattr(self, "cors_origins", "*") or "*"
         return [
             origin.strip()
-            for origin in self.cors_origins.split(",")
+            for origin in origins.split(",")
             if origin.strip()
         ]
 
@@ -201,7 +204,15 @@ class Settings(BaseSettings):
     def _normalize_database_url(
         raw_url: str,
     ) -> str:
-        if raw_url.startswith("postgres://"):
+        if raw_url.startswith("sqlite://"):
+            return raw_url.replace(
+                "sqlite://",
+                "sqlite+aiosqlite://",
+                1,
+            )
+        elif raw_url.startswith("sqlite+aiosqlite://"):
+            return raw_url
+        elif raw_url.startswith("postgres://"):
             raw_url = raw_url.replace(
                 "postgres://",
                 "postgresql+psycopg://",
