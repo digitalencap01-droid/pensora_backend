@@ -1,29 +1,10 @@
+from __future__ import annotations
+
+import math
+from types import SimpleNamespace
 from uuid import UUID
 
-from sqlalchemy import (
-    desc,
-    func,
-    select,
-)
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
-
-from app.db.models import (
-    ArticleRecord,
-    ArticleVersionRecord,
-    ContentBriefRecord,
-    ContentProject,
-    DocumentChunkRecord,
-    DocumentImageRecord,
-    GeneratedFileRecord,
-    ImageBatch,
-    KeywordStrategyRecord,
-    ResearchRun,
-    SEOMetadataRecord,
-    UploadedDocument,
-    UploadedImageRecord,
-)
+from app.db.supabase_rest import row, supabase_rest
 from app.schemas.article import (
     ArticleResult,
 )
@@ -47,684 +28,505 @@ from app.schemas.seo import (
 )
 
 
+def _vector_literal(embedding: list[float]) -> str:
+    # pgvector's text input format — sent as a plain string, Postgres
+    # casts it to `vector` on the way in.
+    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+
+
+def _parse_vector(value) -> list[float]:
+    if isinstance(value, list):
+        return [float(x) for x in value]
+    text = str(value).strip().strip("[]")
+    if not text:
+        return []
+    return [float(x) for x in text.split(",")]
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
 class ContentRepository:
     async def list_projects(
         self,
-        session: AsyncSession,
         limit: int = 20,
         offset: int = 0,
-    ) -> tuple[
-        list[ContentProject],
-        int,
-    ]:
-        count_result = await session.execute(
-            select(
-                func.count(
-                    ContentProject.id
-                )
-            )
+    ) -> tuple[list[SimpleNamespace], int]:
+        total = await supabase_rest.count("content_projects")
+
+        rows = await supabase_rest.select(
+            "content_projects",
+            params={
+                "select": "*",
+                "order": "created_at.desc",
+                "limit": str(limit),
+                "offset": str(offset),
+            },
         )
 
-        total = int(
-            count_result.scalar_one()
-        )
-
-        result = await session.execute(
-            select(
-                ContentProject
-            )
-            .order_by(
-                desc(
-                    ContentProject.created_at
-                )
-            )
-            .limit(limit)
-            .offset(offset)
-        )
-
-        projects = list(
-            result.scalars().all()
-        )
-
-        return projects, total
+        return [row(r) for r in rows], total
 
     async def get_project(
         self,
-        session: AsyncSession,
         project_id: UUID,
-    ) -> ContentProject | None:
-        result = await session.execute(
-            select(
-                ContentProject
-            ).where(
-                ContentProject.id
-                == project_id
-            )
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "content_projects",
+            params={"id": f"eq.{project_id}"},
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def create_project(
         self,
-        session: AsyncSession,
         request: ContentGenerateRequest,
-    ) -> ContentProject:
-        project = ContentProject(
-            topic=request.topic,
-            country_code=request.country_code,
-            language=request.language,
-            article_type=request.article_type,
-            tone=request.tone,
-            content_goal=request.content_goal,
-            status="generating",
-            current_stage="research",
-            request_payload=(
-                request.model_dump(
-                    mode="json"
-                )
+    ) -> SimpleNamespace:
+        data = {
+            "topic": request.topic,
+            "country_code": request.country_code,
+            "language": request.language,
+            "article_type": request.article_type,
+            "tone": request.tone,
+            "content_goal": request.content_goal,
+            "status": "generating",
+            "current_stage": "research",
+            "request_payload": request.model_dump(
+                mode="json"
             ),
-        )
+        }
 
-        session.add(project)
-        await session.commit()
-        await session.refresh(project)
-        return project
+        result = await supabase_rest.insert_one(
+            "content_projects", data
+        )
+        return row(result)
 
     async def update_project_stage(
         self,
-        session: AsyncSession,
         project_id: UUID,
         stage: str,
     ) -> None:
-        project = await session.get(
-            ContentProject,
-            project_id,
+        result = await supabase_rest.update(
+            "content_projects",
+            {"current_stage": stage, "status": "generating"},
+            params={"id": f"eq.{project_id}"},
         )
 
-        if project is None:
+        if not result:
             raise ValueError(
                 "Content project not found."
             )
 
-        project.current_stage = stage
-        project.status = "generating"
-
-        await session.commit()
-
     async def mark_project_completed(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> None:
-        project = await session.get(
-            ContentProject,
-            project_id,
+        await supabase_rest.update(
+            "content_projects",
+            {
+                "status": "completed",
+                "current_stage": "completed",
+                "error_stage": None,
+                "error_message": None,
+            },
+            params={"id": f"eq.{project_id}"},
         )
-
-        if project is None:
-            return
-
-        project.status = "completed"
-        project.current_stage = "completed"
-        project.error_stage = None
-        project.error_message = None
-
-        await session.commit()
 
     async def mark_project_failed(
         self,
-        session: AsyncSession,
         project_id: UUID,
         stage: str,
         message: str,
     ) -> None:
-        project = await session.get(
-            ContentProject,
-            project_id,
+        await supabase_rest.update(
+            "content_projects",
+            {
+                "status": "failed",
+                "current_stage": stage,
+                "error_stage": stage,
+                "error_message": message,
+            },
+            params={"id": f"eq.{project_id}"},
         )
-
-        if project is None:
-            return
-
-        project.status = "failed"
-        project.current_stage = stage
-        project.error_stage = stage
-        project.error_message = message
-
-        await session.commit()
 
     async def save_research(
         self,
-        session: AsyncSession,
         project_id: UUID,
         research: ResearchResult,
-    ) -> ResearchRun:
+    ) -> SimpleNamespace:
         version = await self._next_version(
-            session=session,
-            model=ResearchRun,
-            project_id=project_id,
+            "research_runs", project_id
         )
 
-        record = ResearchRun(
-            project_id=project_id,
-            version=version,
-            source_count=len(
-                research.sources
-            ),
-            payload=research.model_dump(
-                mode="json"
-            ),
-        )
+        data = {
+            "project_id": project_id,
+            "version": version,
+            "source_count": len(research.sources),
+            "payload": research.model_dump(mode="json"),
+        }
 
-        session.add(record)
-        await session.commit()
-        await session.refresh(record)
-        return record
+        result = await supabase_rest.insert_one(
+            "research_runs", data
+        )
+        return row(result)
 
     async def save_keywords(
         self,
-        session: AsyncSession,
         project_id: UUID,
         keywords: KeywordResult,
-    ) -> KeywordStrategyRecord:
+    ) -> SimpleNamespace:
         version = await self._next_version(
-            session=session,
-            model=KeywordStrategyRecord,
-            project_id=project_id,
+            "keyword_strategies", project_id
         )
 
-        record = KeywordStrategyRecord(
-            project_id=project_id,
-            version=version,
-            primary_keyword=(
-                keywords
-                .primary_keyword
-                .keyword
+        data = {
+            "project_id": project_id,
+            "version": version,
+            "primary_keyword": (
+                keywords.primary_keyword.keyword
             ),
-            search_intent=(
-                keywords
-                .search_intent
-                .primary_intent
+            "search_intent": (
+                keywords.search_intent.primary_intent
             ),
-            payload=keywords.model_dump(
-                mode="json"
-            ),
-        )
+            "payload": keywords.model_dump(mode="json"),
+        }
 
-        session.add(record)
-        await session.commit()
-        await session.refresh(record)
-        return record
+        result = await supabase_rest.insert_one(
+            "keyword_strategies", data
+        )
+        return row(result)
 
     async def save_content_brief(
         self,
-        session: AsyncSession,
         project_id: UUID,
         brief: ContentBriefResult,
-    ) -> ContentBriefRecord:
+    ) -> SimpleNamespace:
         version = await self._next_version(
-            session=session,
-            model=ContentBriefRecord,
-            project_id=project_id,
+            "content_briefs", project_id
         )
 
-        record = ContentBriefRecord(
-            project_id=project_id,
-            version=version,
-            recommended_title=(
-                brief.recommended_title
-            ),
-            target_word_count=(
-                brief.target_word_count
-            ),
-            payload=brief.model_dump(
-                mode="json"
-            ),
-        )
+        data = {
+            "project_id": project_id,
+            "version": version,
+            "recommended_title": brief.recommended_title,
+            "target_word_count": brief.target_word_count,
+            "payload": brief.model_dump(mode="json"),
+        }
 
-        session.add(record)
-        await session.commit()
-        await session.refresh(record)
-        return record
+        result = await supabase_rest.insert_one(
+            "content_briefs", data
+        )
+        return row(result)
 
     async def save_article(
         self,
-        session: AsyncSession,
         project_id: UUID,
         article: ArticleResult,
-    ) -> tuple[
-        ArticleRecord,
-        ArticleVersionRecord,
-    ]:
-        result = await session.execute(
-            select(
-                ArticleRecord
-            ).where(
-                ArticleRecord.project_id
-                == project_id
-            )
+    ) -> tuple[SimpleNamespace, SimpleNamespace]:
+        existing = await supabase_rest.select_one(
+            "articles",
+            params={"project_id": f"eq.{project_id}"},
         )
 
-        article_record = (
-            result.scalar_one_or_none()
-        )
-
-        if article_record is None:
-            article_record = ArticleRecord(
-                project_id=project_id,
-                title=article.title,
-                current_version_number=0,
+        if existing is None:
+            existing = await supabase_rest.insert_one(
+                "articles",
+                {
+                    "project_id": project_id,
+                    "title": article.title,
+                    "current_version_number": 0,
+                },
             )
-
-            session.add(
-                article_record
-            )
-
-            await session.flush()
 
         next_version = (
-            article_record
-            .current_version_number
-            + 1
+            existing["current_version_number"] + 1
         )
 
-        version_record = (
-            ArticleVersionRecord(
-                article_id=(
-                    article_record.id
-                ),
-                version_number=(
-                    next_version
-                ),
-                word_count=(
-                    article.total_word_count
-                ),
-                article_markdown=(
+        version_result = await supabase_rest.insert_one(
+            "article_versions",
+            {
+                "article_id": existing["id"],
+                "version_number": next_version,
+                "word_count": article.total_word_count,
+                "article_markdown": (
                     article.article_markdown
                 ),
-                payload=article.model_dump(
-                    mode="json"
-                ),
-            )
+                "payload": article.model_dump(mode="json"),
+            },
         )
 
-        session.add(
-            version_record
+        updated = await supabase_rest.update(
+            "articles",
+            {
+                "title": article.title,
+                "current_version_number": next_version,
+            },
+            params={"id": f"eq.{existing['id']}"},
         )
 
-        article_record.title = (
-            article.title
-        )
-        article_record.current_version_number = (
-            next_version
-        )
-
-        await session.commit()
-        await session.refresh(
-            article_record
-        )
-        await session.refresh(
-            version_record
-        )
-
-        return (
-            article_record,
-            version_record,
-        )
+        return row(updated[0]), row(version_result)
 
     async def save_seo(
         self,
-        session: AsyncSession,
         project_id: UUID,
         article_version_id: UUID,
         seo: SEOResult,
-    ) -> SEOMetadataRecord:
+    ) -> SimpleNamespace:
         version = await self._next_version(
-            session=session,
-            model=SEOMetadataRecord,
-            project_id=project_id,
+            "seo_metadata", project_id
         )
 
-        record = SEOMetadataRecord(
-            project_id=project_id,
-            article_version_id=(
-                article_version_id
-            ),
-            version=version,
-            slug=seo.slug,
-            canonical_url=(
-                seo.canonical_url
-            ),
-            readiness_score=(
-                seo.readiness_score
-            ),
-            payload=seo.model_dump(
-                mode="json"
-            ),
-        )
+        data = {
+            "project_id": project_id,
+            "article_version_id": article_version_id,
+            "version": version,
+            "slug": seo.slug,
+            "canonical_url": seo.canonical_url,
+            "readiness_score": seo.readiness_score,
+            "payload": seo.model_dump(mode="json"),
+        }
 
-        session.add(record)
-        await session.commit()
-        await session.refresh(record)
-        return record
+        result = await supabase_rest.insert_one(
+            "seo_metadata", data
+        )
+        return row(result)
 
     async def save_generated_html(
         self,
-        session: AsyncSession,
         project_id: UUID,
         article_version_id: UUID,
         seo_metadata_id: UUID,
         html: HTMLRenderResult,
-    ) -> GeneratedFileRecord:
-        record = GeneratedFileRecord(
-            project_id=project_id,
-            article_version_id=(
-                article_version_id
-            ),
-            seo_metadata_id=(
-                seo_metadata_id
-            ),
-            file_type="html",
-            filename=html.filename,
-            relative_path=(
-                html.relative_path
-            ),
-            full_html=html.full_html,
-            article_html=(
-                html.article_html
-            ),
-        )
+    ) -> SimpleNamespace:
+        data = {
+            "project_id": project_id,
+            "article_version_id": article_version_id,
+            "seo_metadata_id": seo_metadata_id,
+            "file_type": "html",
+            "filename": html.filename,
+            "relative_path": html.relative_path,
+            "full_html": html.full_html,
+            "article_html": html.article_html,
+        }
 
-        session.add(record)
-        await session.commit()
-        await session.refresh(record)
-        return record
+        result = await supabase_rest.insert_one(
+            "generated_files", data
+        )
+        return row(result)
 
     async def _latest_project_record(
         self,
-        session: AsyncSession,
-        model,
+        table: str,
         project_id: UUID,
-    ):
-        result = await session.execute(
-            select(
-                model
-            )
-            .where(
-                model.project_id
-                == project_id
-            )
-            .order_by(
-                desc(
-                    model.version
-                )
-            )
-            .limit(1)
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            table,
+            params={
+                "project_id": f"eq.{project_id}",
+                "order": "version.desc",
+            },
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def get_latest_research(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> ResearchRun | None:
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
         return await self._latest_project_record(
-            session=session,
-            model=ResearchRun,
-            project_id=project_id,
+            "research_runs", project_id
         )
 
     async def get_latest_keywords(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> KeywordStrategyRecord | None:
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
         return await self._latest_project_record(
-            session=session,
-            model=KeywordStrategyRecord,
-            project_id=project_id,
+            "keyword_strategies", project_id
         )
 
     async def get_latest_content_brief(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> ContentBriefRecord | None:
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
         return await self._latest_project_record(
-            session=session,
-            model=ContentBriefRecord,
-            project_id=project_id,
+            "content_briefs", project_id
         )
 
     async def get_latest_seo(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> SEOMetadataRecord | None:
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
         return await self._latest_project_record(
-            session=session,
-            model=SEOMetadataRecord,
-            project_id=project_id,
+            "seo_metadata", project_id
         )
 
     async def get_article_by_project(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> ArticleRecord | None:
-        result = await session.execute(
-            select(
-                ArticleRecord
-            )
-            .where(
-                ArticleRecord.project_id
-                == project_id
-            )
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "articles",
+            params={"project_id": f"eq.{project_id}"},
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def get_current_article_version(
-        self,
-        session: AsyncSession,
-        article: ArticleRecord,
-    ) -> ArticleVersionRecord | None:
-        result = await session.execute(
-            select(
-                ArticleVersionRecord
-            )
-            .where(
-                ArticleVersionRecord.article_id
-                == article.id
-            )
-            .where(
-                ArticleVersionRecord.version_number
-                == article.current_version_number
-            )
+        self, article: SimpleNamespace
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "article_versions",
+            params={
+                "article_id": f"eq.{article.id}",
+                "version_number": (
+                    f"eq.{article.current_version_number}"
+                ),
+            },
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def list_article_versions(
-        self,
-        session: AsyncSession,
-        article_id: UUID,
-    ) -> list[ArticleVersionRecord]:
-        result = await session.execute(
-            select(
-                ArticleVersionRecord
-            )
-            .where(
-                ArticleVersionRecord.article_id
-                == article_id
-            )
-            .order_by(
-                desc(
-                    ArticleVersionRecord
-                    .version_number
-                )
-            )
+        self, article_id: UUID
+    ) -> list[SimpleNamespace]:
+        rows = await supabase_rest.select(
+            "article_versions",
+            params={
+                "article_id": f"eq.{article_id}",
+                "order": "version_number.desc",
+            },
         )
-
-        return list(
-            result.scalars().all()
-        )
+        return [row(r) for r in rows]
 
     async def get_article_version(
         self,
-        session: AsyncSession,
         article_id: UUID,
         version_number: int,
-    ) -> ArticleVersionRecord | None:
-        result = await session.execute(
-            select(
-                ArticleVersionRecord
-            )
-            .where(
-                ArticleVersionRecord.article_id
-                == article_id
-            )
-            .where(
-                ArticleVersionRecord.version_number
-                == version_number
-            )
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "article_versions",
+            params={
+                "article_id": f"eq.{article_id}",
+                "version_number": f"eq.{version_number}",
+            },
+        )
+        return row(data) if data else None
+
+    async def get_usage_summary(self) -> dict:
+        projects = await supabase_rest.select(
+            "content_projects",
+            params={"select": "id,status"},
         )
 
-        return result.scalar_one_or_none()
-
-    async def get_usage_summary(
-        self,
-        session: AsyncSession,
-    ) -> dict:
-        counts_result = await session.execute(
-            select(
-                func.count(
-                    ContentProject.id
-                ),
-                func.count(
-                    ContentProject.id
-                ).filter(
-                    ContentProject.status
-                    == "completed"
-                ),
-                func.count(
-                    ContentProject.id
-                ).filter(
-                    ContentProject.status
-                    == "failed"
-                ),
-            )
+        total_projects = len(projects)
+        completed_projects = sum(
+            1
+            for p in projects
+            if p["status"] == "completed"
+        )
+        failed_projects = sum(
+            1 for p in projects if p["status"] == "failed"
         )
 
-        (
-            total_projects,
-            completed_projects,
-            failed_projects,
-        ) = counts_result.one()
+        articles = await supabase_rest.select(
+            "articles",
+            params={
+                "select": "id,current_version_number"
+            },
+        )
 
-        words_result = await session.execute(
-            select(
-                func.coalesce(
-                    func.sum(
-                        ArticleVersionRecord.word_count
+        total_words_written = 0
+
+        if articles:
+            ids = ",".join(
+                str(a["id"]) for a in articles
+            )
+            versions = await supabase_rest.select(
+                "article_versions",
+                params={
+                    "article_id": f"in.({ids})",
+                    "select": (
+                        "article_id,version_number,"
+                        "word_count"
                     ),
-                    0,
+                },
+            )
+            current_by_article = {
+                a["id"]: a["current_version_number"]
+                for a in articles
+            }
+            total_words_written = sum(
+                v["word_count"]
+                for v in versions
+                if v["version_number"]
+                == current_by_article.get(
+                    v["article_id"]
                 )
             )
-            .select_from(ContentProject)
-            .join(
-                ArticleRecord,
-                ArticleRecord.project_id
-                == ContentProject.id,
-            )
-            .join(
-                ArticleVersionRecord,
-                (
-                    ArticleVersionRecord.article_id
-                    == ArticleRecord.id
-                )
-                & (
-                    ArticleVersionRecord
-                    .version_number
-                    == ArticleRecord
-                    .current_version_number
-                ),
-            )
-        )
-
-        total_words_written = (
-            words_result.scalar_one()
-        )
 
         return {
             "total_projects": total_projects,
-            "completed_projects": (
-                completed_projects
-            ),
+            "completed_projects": completed_projects,
             "failed_projects": failed_projects,
-            "total_words_written": (
-                total_words_written
-            ),
+            "total_words_written": total_words_written,
         }
 
     async def list_sitemap_entries(
         self,
-        session: AsyncSession,
     ) -> list[tuple[str, object]]:
-        # DISTINCT ON + ORDER BY version DESC gets the latest SEO
-        # record per project in one query.
-        result = await session.execute(
-            select(
-                SEOMetadataRecord.canonical_url,
-                SEOMetadataRecord.updated_at,
-            )
-            .distinct(
-                SEOMetadataRecord.project_id
-            )
-            .join(
-                ContentProject,
-                ContentProject.id
-                == SEOMetadataRecord.project_id,
-            )
-            .where(
-                ContentProject.status
-                == "completed"
-            )
-            .order_by(
-                SEOMetadataRecord.project_id,
-                desc(SEOMetadataRecord.version),
-            )
+        completed = await supabase_rest.select(
+            "content_projects",
+            params={
+                "select": "id",
+                "status": "eq.completed",
+            },
         )
 
-        return list(result.all())
+        if not completed:
+            return []
 
-    async def get_latest_generated_file(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> GeneratedFileRecord | None:
-        result = await session.execute(
-            select(
-                GeneratedFileRecord
-            )
-            .where(
-                GeneratedFileRecord.project_id
-                == project_id
-            )
-            .order_by(
-                desc(
-                    GeneratedFileRecord.created_at
+        ids = ",".join(str(p["id"]) for p in completed)
+
+        seo_rows = await supabase_rest.select(
+            "seo_metadata",
+            params={
+                "project_id": f"in.({ids})",
+                "select": (
+                    "project_id,canonical_url,"
+                    "version,updated_at"
+                ),
+                "order": "project_id.asc,version.desc",
+            },
+        )
+
+        seen: set = set()
+        entries: list[tuple[str, object]] = []
+
+        for entry in seo_rows:
+            project_id = entry["project_id"]
+            if project_id in seen:
+                continue
+            seen.add(project_id)
+            entries.append(
+                (
+                    entry["canonical_url"],
+                    entry["updated_at"],
                 )
             )
-            .limit(1)
-        )
 
-        return result.scalar_one_or_none()
+        return entries
+
+    async def get_latest_generated_file(
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "generated_files",
+            params={
+                "project_id": f"eq.{project_id}",
+                "order": "created_at.desc",
+            },
+        )
+        return row(data) if data else None
 
     async def save_document_with_chunks(
         self,
-        session: AsyncSession,
         document_id: UUID,
         filename: str,
         file_type: str,
@@ -736,302 +538,224 @@ class ContentRepository:
         chunks: list[
             tuple[str, int | None, list[float]]
         ],
-    ) -> UploadedDocument:
-        document = UploadedDocument(
-            id=document_id,
-            filename=filename,
-            file_type=file_type,
-            storage_bucket=storage_bucket,
-            storage_path=storage_path,
-            file_size_bytes=file_size_bytes,
-            char_count=char_count,
-            page_count=page_count,
-            chunk_count=len(chunks),
-            status="ready",
+    ) -> SimpleNamespace:
+        document = await supabase_rest.insert_one(
+            "uploaded_documents",
+            {
+                "id": document_id,
+                "filename": filename,
+                "file_type": file_type,
+                "storage_bucket": storage_bucket,
+                "storage_path": storage_path,
+                "file_size_bytes": file_size_bytes,
+                "char_count": char_count,
+                "page_count": page_count,
+                "chunk_count": len(chunks),
+                "status": "ready",
+            },
         )
 
-        session.add(document)
-        await session.flush()
-
-        for index, (
-            content,
-            page_number,
-            embedding,
-        ) in enumerate(chunks):
-            session.add(
-                DocumentChunkRecord(
-                    document_id=document.id,
-                    chunk_index=index,
-                    page_number=page_number,
-                    content=content,
-                    token_count=len(
-                        content.split()
+        if chunks:
+            chunk_rows = [
+                {
+                    "document_id": document["id"],
+                    "chunk_index": index,
+                    "page_number": page_number,
+                    "content": content,
+                    "token_count": len(content.split()),
+                    "embedding": _vector_literal(
+                        embedding
                     ),
-                    embedding=embedding,
-                )
+                }
+                for index, (
+                    content,
+                    page_number,
+                    embedding,
+                ) in enumerate(chunks)
+            ]
+            await supabase_rest.insert(
+                "document_chunks", chunk_rows
             )
 
-        await session.commit()
-        await session.refresh(document)
-        return document
+        return row(document)
 
     async def get_document(
-        self,
-        session: AsyncSession,
-        document_id: UUID,
-    ) -> UploadedDocument | None:
-        result = await session.execute(
-            select(
-                UploadedDocument
-            ).where(
-                UploadedDocument.id
-                == document_id
-            )
+        self, document_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "uploaded_documents",
+            params={"id": f"eq.{document_id}"},
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def get_document_by_project(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> UploadedDocument | None:
-        result = await session.execute(
-            select(
-                UploadedDocument
-            )
-            .where(
-                UploadedDocument.project_id
-                == project_id
-            )
-            .order_by(
-                desc(
-                    UploadedDocument.created_at
-                )
-            )
-            .limit(1)
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "uploaded_documents",
+            params={
+                "project_id": f"eq.{project_id}",
+                "order": "created_at.desc",
+            },
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def save_document_images(
         self,
-        session: AsyncSession,
         document_id: UUID,
         storage_bucket: str,
         images: list[
             tuple[
-                str,
-                str,
-                str,
-                int,
-                int,
-                int,
-                int | None,
+                str, str, str, int, int, int, int | None
             ]
         ],
-    ) -> list[DocumentImageRecord]:
-        records = []
+    ) -> list[SimpleNamespace]:
+        if not images:
+            return []
 
-        for index, (
-            storage_path,
-            public_url,
-            content_type,
-            width,
-            height,
-            file_size_bytes,
-            page_number,
-        ) in enumerate(images):
-            record = DocumentImageRecord(
-                document_id=document_id,
-                order_index=index,
-                page_number=page_number,
-                storage_bucket=storage_bucket,
-                storage_path=storage_path,
-                public_url=public_url,
-                content_type=content_type,
-                width=width,
-                height=height,
-                file_size_bytes=file_size_bytes,
-            )
-            session.add(record)
-            records.append(record)
+        image_rows = [
+            {
+                "document_id": document_id,
+                "order_index": index,
+                "page_number": page_number,
+                "storage_bucket": storage_bucket,
+                "storage_path": storage_path,
+                "public_url": public_url,
+                "content_type": content_type,
+                "width": width,
+                "height": height,
+                "file_size_bytes": file_size_bytes,
+            }
+            for index, (
+                storage_path,
+                public_url,
+                content_type,
+                width,
+                height,
+                file_size_bytes,
+                page_number,
+            ) in enumerate(images)
+        ]
 
-        await session.commit()
-
-        for record in records:
-            await session.refresh(record)
-
-        return records
+        result = await supabase_rest.insert(
+            "document_images", image_rows
+        )
+        return [row(r) for r in result]
 
     async def list_document_images(
-        self,
-        session: AsyncSession,
-        document_id: UUID,
-    ) -> list[DocumentImageRecord]:
-        result = await session.execute(
-            select(
-                DocumentImageRecord
-            )
-            .where(
-                DocumentImageRecord.document_id
-                == document_id
-            )
-            .order_by(
-                DocumentImageRecord.order_index
-            )
+        self, document_id: UUID
+    ) -> list[SimpleNamespace]:
+        rows = await supabase_rest.select(
+            "document_images",
+            params={
+                "document_id": f"eq.{document_id}",
+                "order": "order_index.asc",
+            },
         )
-
-        return list(
-            result.scalars().all()
-        )
+        return [row(r) for r in rows]
 
     async def save_image_batch(
         self,
-        session: AsyncSession,
         batch_id: UUID,
         storage_bucket: str,
         images: list[
-            tuple[
-                str,
-                str,
-                str,
-                str,
-                int,
-                int,
-                int,
-            ]
+            tuple[str, str, str, str, int, int, int]
         ],
-    ) -> ImageBatch:
-        batch = ImageBatch(
-            id=batch_id,
-            image_count=len(images),
-            status="ready",
+    ) -> SimpleNamespace:
+        batch = await supabase_rest.insert_one(
+            "image_batches",
+            {
+                "id": batch_id,
+                "image_count": len(images),
+                "status": "ready",
+            },
         )
 
-        session.add(batch)
-        await session.flush()
-
-        for index, (
-            filename,
-            storage_path,
-            public_url,
-            content_type,
-            width,
-            height,
-            file_size_bytes,
-        ) in enumerate(images):
-            session.add(
-                UploadedImageRecord(
-                    batch_id=batch.id,
-                    order_index=index,
-                    filename=filename,
-                    storage_bucket=storage_bucket,
-                    storage_path=storage_path,
-                    public_url=public_url,
-                    content_type=content_type,
-                    width=width,
-                    height=height,
-                    file_size_bytes=file_size_bytes,
-                )
+        if images:
+            image_rows = [
+                {
+                    "batch_id": batch["id"],
+                    "order_index": index,
+                    "filename": filename,
+                    "storage_bucket": storage_bucket,
+                    "storage_path": storage_path,
+                    "public_url": public_url,
+                    "content_type": content_type,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": file_size_bytes,
+                }
+                for index, (
+                    filename,
+                    storage_path,
+                    public_url,
+                    content_type,
+                    width,
+                    height,
+                    file_size_bytes,
+                ) in enumerate(images)
+            ]
+            await supabase_rest.insert(
+                "uploaded_images", image_rows
             )
 
-        await session.commit()
-        await session.refresh(batch)
-        return batch
+        return row(batch)
 
     async def get_image_batch(
-        self,
-        session: AsyncSession,
-        batch_id: UUID,
-    ) -> ImageBatch | None:
-        result = await session.execute(
-            select(
-                ImageBatch
-            ).where(
-                ImageBatch.id == batch_id
-            )
+        self, batch_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "image_batches",
+            params={"id": f"eq.{batch_id}"},
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def get_image_batch_by_project(
-        self,
-        session: AsyncSession,
-        project_id: UUID,
-    ) -> ImageBatch | None:
-        result = await session.execute(
-            select(
-                ImageBatch
-            )
-            .where(
-                ImageBatch.project_id == project_id
-            )
-            .order_by(
-                desc(ImageBatch.created_at)
-            )
-            .limit(1)
+        self, project_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "image_batches",
+            params={
+                "project_id": f"eq.{project_id}",
+                "order": "created_at.desc",
+            },
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def list_batch_images(
-        self,
-        session: AsyncSession,
-        batch_id: UUID,
-    ) -> list[UploadedImageRecord]:
-        result = await session.execute(
-            select(
-                UploadedImageRecord
-            )
-            .where(
-                UploadedImageRecord.batch_id
-                == batch_id
-            )
-            .order_by(
-                UploadedImageRecord.order_index
-            )
+        self, batch_id: UUID
+    ) -> list[SimpleNamespace]:
+        rows = await supabase_rest.select(
+            "uploaded_images",
+            params={
+                "batch_id": f"eq.{batch_id}",
+                "order": "order_index.asc",
+            },
         )
-
-        return list(
-            result.scalars().all()
-        )
+        return [row(r) for r in rows]
 
     async def link_image_batch_to_project(
         self,
-        session: AsyncSession,
         batch_id: UUID,
         project_id: UUID,
     ) -> None:
-        batch = await session.get(
-            ImageBatch,
-            batch_id,
+        await supabase_rest.update(
+            "image_batches",
+            {"project_id": project_id},
+            params={"id": f"eq.{batch_id}"},
         )
-
-        if batch is None:
-            return
-
-        batch.project_id = project_id
-        await session.commit()
 
     async def get_uploaded_image(
-        self,
-        session: AsyncSession,
-        image_id: UUID,
-    ) -> UploadedImageRecord | None:
-        result = await session.execute(
-            select(
-                UploadedImageRecord
-            ).where(
-                UploadedImageRecord.id == image_id
-            )
+        self, image_id: UUID
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "uploaded_images",
+            params={"id": f"eq.{image_id}"},
         )
-
-        return result.scalar_one_or_none()
+        return row(data) if data else None
 
     async def update_uploaded_image(
         self,
-        session: AsyncSession,
         image_id: UUID,
         storage_path: str,
         public_url: str,
@@ -1039,117 +763,86 @@ class ContentRepository:
         width: int,
         height: int,
         file_size_bytes: int,
-    ) -> UploadedImageRecord:
-        image = await session.get(
-            UploadedImageRecord,
-            image_id,
+    ) -> SimpleNamespace:
+        result = await supabase_rest.update(
+            "uploaded_images",
+            {
+                "storage_path": storage_path,
+                "public_url": public_url,
+                "content_type": content_type,
+                "width": width,
+                "height": height,
+                "file_size_bytes": file_size_bytes,
+            },
+            params={"id": f"eq.{image_id}"},
         )
 
-        if image is None:
+        if not result:
             raise ValueError(
                 "Uploaded image not found."
             )
 
-        image.storage_path = storage_path
-        image.public_url = public_url
-        image.content_type = content_type
-        image.width = width
-        image.height = height
-        image.file_size_bytes = file_size_bytes
-
-        await session.commit()
-        await session.refresh(image)
-        return image
+        return row(result[0])
 
     async def list_documents(
         self,
-        session: AsyncSession,
-    ) -> list[UploadedDocument]:
-        result = await session.execute(
-            select(
-                UploadedDocument
-            )
-            .order_by(
-                desc(
-                    UploadedDocument.created_at
-                )
-            )
+    ) -> list[SimpleNamespace]:
+        rows = await supabase_rest.select(
+            "uploaded_documents",
+            params={"order": "created_at.desc"},
         )
-
-        return list(
-            result.scalars().all()
-        )
+        return [row(r) for r in rows]
 
     async def link_document_to_project(
         self,
-        session: AsyncSession,
         document_id: UUID,
         project_id: UUID,
     ) -> None:
-        document = await session.get(
-            UploadedDocument,
-            document_id,
+        await supabase_rest.update(
+            "uploaded_documents",
+            {"project_id": project_id},
+            params={"id": f"eq.{document_id}"},
         )
-
-        if document is None:
-            return
-
-        document.project_id = project_id
-        await session.commit()
 
     async def search_document_chunks(
         self,
-        session: AsyncSession,
         document_id: UUID,
         query_embedding: list[float],
         top_k: int = 6,
-    ) -> list[DocumentChunkRecord]:
-        result = await session.execute(
-            select(
-                DocumentChunkRecord
-            )
-            .where(
-                DocumentChunkRecord.document_id
-                == document_id
-            )
-            .order_by(
-                DocumentChunkRecord
-                .embedding
-                .cosine_distance(
-                    query_embedding
-                )
-            )
-            .limit(top_k)
+    ) -> list[SimpleNamespace]:
+        rows = await supabase_rest.select(
+            "document_chunks",
+            params={"document_id": f"eq.{document_id}"},
         )
 
-        return list(
-            result.scalars().all()
-        )
+        scored = [
+            (
+                _cosine_similarity(
+                    query_embedding,
+                    _parse_vector(r["embedding"]),
+                ),
+                r,
+            )
+            for r in rows
+        ]
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+
+        return [row(r) for _, r in scored[:top_k]]
 
     async def _next_version(
         self,
-        session: AsyncSession,
-        model,
+        table: str,
         project_id: UUID,
     ) -> int:
-        result = await session.execute(
-            select(
-                func.coalesce(
-                    func.max(
-                        model.version
-                    ),
-                    0,
-                )
-                + 1
-            ).where(
-                model.project_id
-                == project_id
-            )
+        data = await supabase_rest.select_one(
+            table,
+            params={
+                "project_id": f"eq.{project_id}",
+                "select": "version",
+                "order": "version.desc",
+            },
         )
-
-        return int(
-            result.scalar_one()
-        )
+        return (data["version"] + 1) if data else 1
 
 
 content_repository = ContentRepository()

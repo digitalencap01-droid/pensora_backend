@@ -2,14 +2,11 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    Depends,
     File,
     HTTPException,
     UploadFile,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db_session
 from app.db.repository import content_repository
 from app.schemas.document import (
     DocumentImageListResult,
@@ -36,15 +33,11 @@ router = APIRouter(
 )
 async def upload_document(
     file: UploadFile = File(...),
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> DocumentUploadResult:
     content = await file.read()
 
     try:
         document = await document_service.process_upload(
-            session=session,
             filename=file.filename or "document",
             content=content,
         )
@@ -55,7 +48,6 @@ async def upload_document(
         ) from exc
 
     images = await content_repository.list_document_images(
-        session=session,
         document_id=document.id,
     )
 
@@ -82,12 +74,8 @@ async def upload_document(
 )
 async def list_document_images(
     document_id: UUID,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> DocumentImageListResult:
     document = await content_repository.get_document(
-        session=session,
         document_id=document_id,
     )
 
@@ -98,7 +86,6 @@ async def list_document_images(
         )
 
     images = await content_repository.list_document_images(
-        session=session,
         document_id=document_id,
     )
 
@@ -126,14 +113,8 @@ def _to_image_summary(
     "",
     response_model=DocumentListResult,
 )
-async def list_documents(
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
-) -> DocumentListResult:
-    documents = await content_repository.list_documents(
-        session=session,
-    )
+async def list_documents() -> DocumentListResult:
+    documents = await content_repository.list_documents()
 
     return DocumentListResult(
         documents=[

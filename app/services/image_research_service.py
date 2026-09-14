@@ -33,10 +33,8 @@ class ImageResearchService:
         images: list[UploadedImageRecord],
         request: ImageResearchRequest,
     ) -> ResearchResult:
-        # Vision calls are independent OpenAI requests (no shared DB
-        # session), safe to run concurrently — unlike the document
-        # RAG lookups, which must stay sequential against one
-        # AsyncSession.
+        # Vision calls are independent OpenAI requests, safe to run
+        # concurrently.
         analyses = await asyncio.gather(
             *[
                 image_vision_service.analyze_image(

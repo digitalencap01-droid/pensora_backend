@@ -3,18 +3,11 @@ from xml.sax.saxutils import escape
 
 from fastapi import (
     APIRouter,
-    Depends,
     HTTPException,
     Query,
     Response,
 )
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
 
-from app.db.database import (
-    get_db_session,
-)
 from app.db.repository import (
     content_repository,
 )
@@ -58,14 +51,10 @@ async def list_projects(
         default=0,
         ge=0,
     ),
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ProjectListResult:
     return (
         await project_management_service
         .list_projects(
-            session=session,
             limit=limit,
             offset=offset,
         )
@@ -76,39 +65,27 @@ async def list_projects(
     "/usage-summary",
     response_model=UsageSummary,
 )
-async def get_usage_summary(
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
-) -> UsageSummary:
+async def get_usage_summary() -> UsageSummary:
     return (
         await project_management_service
-        .get_usage_summary(
-            session=session,
-        )
+        .get_usage_summary()
     )
 
 
 @router.get(
     "/sitemap.xml"
 )
-async def get_sitemap(
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
-) -> Response:
+async def get_sitemap() -> Response:
     # Registered before /{project_id} so "sitemap.xml" isn't matched
     # as a project id.
     entries = (
         await content_repository
-        .list_sitemap_entries(
-            session=session,
-        )
+        .list_sitemap_entries()
     )
 
     urls = "".join(
         f"<url><loc>{escape(canonical_url)}</loc>"
-        f"<lastmod>{updated_at.date().isoformat()}</lastmod>"
+        f"<lastmod>{updated_at[:10] if isinstance(updated_at, str) else updated_at.date().isoformat()}</lastmod>"
         "</url>"
         for canonical_url, updated_at in entries
     )
@@ -164,15 +141,11 @@ async def get_robots(
 )
 async def get_project(
     project_id: UUID,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ProjectDetail:
     try:
         return (
             await project_management_service
             .get_project(
-                session=session,
                 project_id=project_id,
             )
         )
@@ -189,15 +162,11 @@ async def get_project(
 )
 async def get_project_artifacts(
     project_id: UUID,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ProjectArtifactsResult:
     try:
         return (
             await project_management_service
             .get_artifacts(
-                session=session,
                 project_id=project_id,
             )
         )
@@ -214,15 +183,11 @@ async def get_project_artifacts(
 )
 async def get_project_document_images(
     project_id: UUID,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> DocumentImageListResult:
     try:
         return (
             await project_management_service
             .get_document_images(
-                session=session,
                 project_id=project_id,
             )
         )
@@ -241,15 +206,11 @@ async def get_project_document_images(
 )
 async def list_article_versions(
     project_id: UUID,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ArticleVersionListResult:
     try:
         return (
             await project_management_service
             .list_versions(
-                session=session,
                 project_id=project_id,
             )
         )
@@ -267,15 +228,11 @@ async def list_article_versions(
 async def get_article_version(
     project_id: UUID,
     version_number: int,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ArticleVersionDetail:
     try:
         return (
             await project_management_service
             .get_version(
-                session=session,
                 project_id=project_id,
                 version_number=(
                     version_number
@@ -296,15 +253,11 @@ async def get_article_version(
 async def update_article(
     project_id: UUID,
     request: ArticleUpdateRequest,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ArticleMutationResult:
     try:
         return (
             await project_management_service
             .update_article(
-                session=session,
                 project_id=project_id,
                 updated_article=(
                     request.article
@@ -325,15 +278,11 @@ async def update_article(
 async def restore_article_version(
     project_id: UUID,
     version_number: int,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ArticleMutationResult:
     try:
         return (
             await project_management_service
             .restore_version(
-                session=session,
                 project_id=project_id,
                 version_number=(
                     version_number
@@ -354,15 +303,11 @@ async def restore_article_version(
 async def regenerate_article_section(
     project_id: UUID,
     request: RegenerateSectionRequest,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ArticleMutationResult:
     try:
         return (
             await project_management_service
             .regenerate_section(
-                session=session,
                 project_id=project_id,
                 section_id=(
                     request.section_id
@@ -385,15 +330,11 @@ async def regenerate_article_section(
 )
 async def rebuild_output(
     project_id: UUID,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> RebuildOutputResult:
     try:
         return (
             await project_management_service
             .rebuild_outputs(
-                session=session,
                 project_id=project_id,
             )
         )

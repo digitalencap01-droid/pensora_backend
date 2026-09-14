@@ -1,7 +1,5 @@
 import json
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.models import (
     DocumentChunkRecord,
     UploadedDocument,
@@ -29,7 +27,6 @@ class DocumentResearchService:
 
     async def research(
         self,
-        session: AsyncSession,
         document: UploadedDocument,
         request: DocumentResearchRequest,
     ) -> ResearchResult:
@@ -39,11 +36,6 @@ class DocumentResearchService:
         )
         queries = query_plan.queries[: request.max_queries]
 
-        # The embedding calls are plain OpenAI requests and could run
-        # concurrently, but a single AsyncSession can't have multiple
-        # operations in flight against it at once — so the embeddings
-        # are batched into one call, then each chunk lookup runs
-        # sequentially against `session`.
         query_embeddings = await document_service.embed_texts(
             queries
         )
@@ -53,7 +45,6 @@ class DocumentResearchService:
         for query_embedding in query_embeddings:
             chunks = (
                 await content_repository.search_document_chunks(
-                    session=session,
                     document_id=document.id,
                     query_embedding=query_embedding,
                     top_k=request.chunks_per_query,

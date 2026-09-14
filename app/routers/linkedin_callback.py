@@ -1,9 +1,7 @@
-from fastapi import Depends, FastAPI, Query
+from fastapi import FastAPI, Query
 from fastapi.responses import RedirectResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.database import get_db_session
 from app.services.linkedin_service import linkedin_service
 
 
@@ -19,7 +17,6 @@ async def linkedin_oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
-    session: AsyncSession = Depends(get_db_session),
 ) -> RedirectResponse:
     frontend_url = settings.frontend_url.rstrip("/")
 
@@ -30,7 +27,6 @@ async def linkedin_oauth_callback(
 
     try:
         return_path = await linkedin_service.handle_callback(
-            session=session,
             code=code,
             state=state,
         )

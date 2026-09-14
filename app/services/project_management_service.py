@@ -1,9 +1,5 @@
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
-
 from app.db.repository import (
     content_repository,
 )
@@ -61,13 +57,11 @@ from app.services.seo_service import (
 class ProjectManagementService:
     async def list_projects(
         self,
-        session: AsyncSession,
         limit: int,
         offset: int,
     ) -> ProjectListResult:
         projects, total = (
             await content_repository.list_projects(
-                session=session,
                 limit=limit,
                 offset=offset,
             )
@@ -87,25 +81,20 @@ class ProjectManagementService:
 
     async def get_usage_summary(
         self,
-        session: AsyncSession,
     ) -> UsageSummary:
         summary = (
             await content_repository
-            .get_usage_summary(
-                session=session,
-            )
+            .get_usage_summary()
         )
 
         return UsageSummary(**summary)
 
     async def get_project(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> ProjectDetail:
         project = (
             await self._require_project(
-                session,
                 project_id,
             )
         )
@@ -127,53 +116,45 @@ class ProjectManagementService:
 
     async def get_artifacts(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> ProjectArtifactsResult:
         await self._require_project(
-            session,
             project_id,
         )
 
         research_record = (
             await content_repository
             .get_latest_research(
-                session,
                 project_id,
             )
         )
         keyword_record = (
             await content_repository
             .get_latest_keywords(
-                session,
                 project_id,
             )
         )
         brief_record = (
             await content_repository
             .get_latest_content_brief(
-                session,
                 project_id,
             )
         )
         seo_record = (
             await content_repository
             .get_latest_seo(
-                session,
                 project_id,
             )
         )
         file_record = (
             await content_repository
             .get_latest_generated_file(
-                session,
                 project_id,
             )
         )
         article_record = (
             await content_repository
             .get_article_by_project(
-                session,
                 project_id,
             )
         )
@@ -184,7 +165,6 @@ class ProjectManagementService:
             version_record = (
                 await content_repository
                 .get_current_article_version(
-                    session,
                     article_record,
                 )
             )
@@ -252,7 +232,6 @@ class ProjectManagementService:
 
     async def get_document_images(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> DocumentImageListResult:
         # Despite the name (kept for API stability), this surfaces
@@ -260,7 +239,6 @@ class ProjectManagementService:
         # from an uploaded document's extracted figures, or from a
         # directly uploaded image batch, whichever grounded it.
         await self._require_project(
-            session,
             project_id,
         )
 
@@ -269,7 +247,6 @@ class ProjectManagementService:
         document = (
             await content_repository
             .get_document_by_project(
-                session=session,
                 project_id=project_id,
             )
         )
@@ -278,7 +255,6 @@ class ProjectManagementService:
             document_images = (
                 await content_repository
                 .list_document_images(
-                    session=session,
                     document_id=document.id,
                 )
             )
@@ -296,7 +272,6 @@ class ProjectManagementService:
         image_batch = (
             await content_repository
             .get_image_batch_by_project(
-                session=session,
                 project_id=project_id,
             )
         )
@@ -305,7 +280,6 @@ class ProjectManagementService:
             batch_images = (
                 await content_repository
                 .list_batch_images(
-                    session=session,
                     batch_id=image_batch.id,
                 )
             )
@@ -326,18 +300,15 @@ class ProjectManagementService:
 
     async def list_versions(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> ArticleVersionListResult:
         article = await self._require_article(
-            session,
             project_id,
         )
 
         versions = (
             await content_repository
             .list_article_versions(
-                session,
                 article.id,
             )
         )
@@ -366,19 +337,16 @@ class ProjectManagementService:
 
     async def get_version(
         self,
-        session: AsyncSession,
         project_id: UUID,
         version_number: int,
     ) -> ArticleVersionDetail:
         article = await self._require_article(
-            session,
             project_id,
         )
 
         version = (
             await content_repository
             .get_article_version(
-                session=session,
                 article_id=article.id,
                 version_number=version_number,
             )
@@ -404,63 +372,52 @@ class ProjectManagementService:
 
     async def update_article(
         self,
-        session: AsyncSession,
         project_id: UUID,
         updated_article: ArticleResult,
     ) -> ArticleMutationResult:
         project = await self._require_project(
-            session,
             project_id,
         )
 
         await self._require_article(
-            session,
             project_id,
         )
 
         return await self._save_new_version_and_rebuild(
-            session=session,
             project=project,
             article=updated_article,
         )
 
     async def restore_version(
         self,
-        session: AsyncSession,
         project_id: UUID,
         version_number: int,
     ) -> ArticleMutationResult:
         old_version = await self.get_version(
-            session=session,
             project_id=project_id,
             version_number=version_number,
         )
 
         project = await self._require_project(
-            session,
             project_id,
         )
 
         return await self._save_new_version_and_rebuild(
-            session=session,
             project=project,
             article=old_version.article,
         )
 
     async def regenerate_section(
         self,
-        session: AsyncSession,
         project_id: UUID,
         section_id: str,
         instructions: str | None,
     ) -> ArticleMutationResult:
         project = await self._require_project(
-            session,
             project_id,
         )
 
         artifacts = await self.get_artifacts(
-            session,
             project_id,
         )
 
@@ -508,24 +465,20 @@ class ProjectManagementService:
         )
 
         return await self._save_new_version_and_rebuild(
-            session=session,
             project=project,
             article=regenerated_article,
         )
 
     async def rebuild_outputs(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> RebuildOutputResult:
         project = await self._require_project(
-            session,
             project_id,
         )
 
         article_record = (
             await self._require_article(
-                session,
                 project_id,
             )
         )
@@ -533,7 +486,6 @@ class ProjectManagementService:
         version_record = (
             await content_repository
             .get_current_article_version(
-                session,
                 article_record,
             )
         )
@@ -549,7 +501,6 @@ class ProjectManagementService:
         )
 
         seo, html = await self._rebuild_outputs_for_version(
-            session=session,
             project=project,
             article=article,
             article_version_id=(
@@ -569,7 +520,6 @@ class ProjectManagementService:
 
     async def _save_new_version_and_rebuild(
         self,
-        session: AsyncSession,
         project,
         article: ArticleResult,
     ) -> ArticleMutationResult:
@@ -577,13 +527,11 @@ class ProjectManagementService:
             article_record,
             article_version,
         ) = await content_repository.save_article(
-            session=session,
             project_id=project.id,
             article=article,
         )
 
         seo, html = await self._rebuild_outputs_for_version(
-            session=session,
             project=project,
             article=article,
             article_version_id=(
@@ -607,7 +555,6 @@ class ProjectManagementService:
 
     async def _rebuild_outputs_for_version(
         self,
-        session: AsyncSession,
         project,
         article: ArticleResult,
         article_version_id: UUID,
@@ -618,7 +565,6 @@ class ProjectManagementService:
         brief_record = (
             await content_repository
             .get_latest_content_brief(
-                session,
                 project.id,
             )
         )
@@ -694,7 +640,6 @@ class ProjectManagementService:
 
         seo_record = (
             await content_repository.save_seo(
-                session=session,
                 project_id=project.id,
                 article_version_id=(
                     article_version_id
@@ -729,7 +674,6 @@ class ProjectManagementService:
         )
 
         await content_repository.save_generated_html(
-            session=session,
             project_id=project.id,
             article_version_id=(
                 article_version_id
@@ -744,12 +688,10 @@ class ProjectManagementService:
 
     async def _require_project(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ):
         project = (
             await content_repository.get_project(
-                session,
                 project_id,
             )
         )
@@ -763,18 +705,15 @@ class ProjectManagementService:
 
     async def _require_article(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ):
         await self._require_project(
-            session,
             project_id,
         )
 
         article = (
             await content_repository
             .get_article_by_project(
-                session,
                 project_id,
             )
         )

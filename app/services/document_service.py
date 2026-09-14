@@ -8,7 +8,6 @@ import httpx
 from docx import Document as DocxDocument
 from PIL import Image
 from pypdf import PdfReader
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import UploadedDocument
@@ -51,7 +50,6 @@ class DocumentService:
 
     async def process_upload(
         self,
-        session: AsyncSession,
         filename: str,
         content: bytes,
     ) -> UploadedDocument:
@@ -94,7 +92,6 @@ class DocumentService:
 
         document = (
             await content_repository.save_document_with_chunks(
-                session=session,
                 document_id=document_id,
                 filename=filename,
                 file_type=extension,
@@ -155,7 +152,6 @@ class DocumentService:
                 )
 
             await content_repository.save_document_images(
-                session=session,
                 document_id=document.id,
                 storage_bucket=(
                     settings.document_images_bucket

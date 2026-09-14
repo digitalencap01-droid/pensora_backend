@@ -2,7 +2,6 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.repository import content_repository
@@ -158,9 +157,8 @@ class WebflowService:
 
     async def get_status(
         self,
-        session: AsyncSession,
     ) -> WebflowStatus:
-        config = await webflow_repository.get_config(session)
+        config = await webflow_repository.get_config()
 
         if config is None:
             return WebflowStatus(connected=False)
@@ -181,13 +179,11 @@ class WebflowService:
 
     async def connect(
         self,
-        session: AsyncSession,
         request: WebflowConnectRequest,
     ) -> WebflowStatus:
         self._require_token()
 
         await webflow_repository.upsert_config(
-            session=session,
             site_id=request.site_id,
             site_name=request.site_name,
             collection_id=request.collection_id,
@@ -200,18 +196,17 @@ class WebflowService:
             thumbnail_field=request.thumbnail_field,
         )
 
-        return await self.get_status(session)
+        return await self.get_status()
 
     async def disconnect(
         self,
-        session: AsyncSession,
     ) -> None:
-        await webflow_repository.delete_config(session)
+        await webflow_repository.delete_config()
 
     # ---- publish ----
 
-    async def _require_config(self, session: AsyncSession):
-        config = await webflow_repository.get_config(session)
+    async def _require_config(self):
+        config = await webflow_repository.get_config()
 
         if config is None:
             raise WebflowNotConnected()
@@ -220,11 +215,10 @@ class WebflowService:
 
     async def _require_project(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ):
         project = await content_repository.get_project(
-            session, project_id
+            project_id
         )
 
         if project is None:
@@ -237,17 +231,16 @@ class WebflowService:
 
     async def _load_publishable_content(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> tuple[ArticleResult, SEOResult, str]:
         article_record = await content_repository.get_article_by_project(
-            session, project_id
+            project_id
         )
         seo_record = await content_repository.get_latest_seo(
-            session, project_id
+            project_id
         )
         file_record = await content_repository.get_latest_generated_file(
-            session, project_id
+            project_id
         )
 
         if article_record is None or seo_record is None or file_record is None:
@@ -260,7 +253,7 @@ class WebflowService:
             )
 
         version_record = await content_repository.get_current_article_version(
-            session, article_record
+            article_record
         )
 
         if version_record is None:
@@ -308,15 +301,14 @@ class WebflowService:
 
     async def publish_project(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> WebflowPublishResult:
         self._require_token()
-        config = await self._require_config(session)
-        project = await self._require_project(session, project_id)
+        config = await self._require_config()
+        project = await self._require_project(project_id)
 
         article, seo, article_html = await self._load_publishable_content(
-            session, project_id
+            project_id
         )
         field_data = self._build_field_data(
             config, article, seo, article_html
@@ -355,7 +347,6 @@ class WebflowService:
             status = "draft"
 
         await webflow_repository.set_publish_state(
-            session=session,
             project_id=project_id,
             item_id=item_id,
             status=status,
@@ -369,12 +360,11 @@ class WebflowService:
 
     async def go_live(
         self,
-        session: AsyncSession,
         project_id: UUID,
     ) -> WebflowPublishResult:
         self._require_token()
-        config = await self._require_config(session)
-        project = await self._require_project(session, project_id)
+        config = await self._require_config()
+        project = await self._require_project(project_id)
 
         if not project.webflow_item_id:
             raise HTTPException(
@@ -390,7 +380,7 @@ class WebflowService:
         # mapped would otherwise still carry a null value for it, and
         # Webflow rejects going live with that null still in place.
         article, seo, article_html = await self._load_publishable_content(
-            session, project_id
+            project_id
         )
         field_data = self._build_field_data(
             config, article, seo, article_html
@@ -405,7 +395,7 @@ class WebflowService:
             )
         except WebflowItemNotFound as exc:
             await webflow_repository.clear_publish_state(
-                session=session, project_id=project_id
+                project_id=project_id
             )
             raise HTTPException(
                 status_code=400,
@@ -422,7 +412,6 @@ class WebflowService:
         )
 
         await webflow_repository.set_publish_state(
-            session=session,
             project_id=project_id,
             item_id=project.webflow_item_id,
             status="live",
