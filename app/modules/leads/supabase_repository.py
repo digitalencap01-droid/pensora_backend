@@ -212,6 +212,29 @@ class SupabaseLeadRepository:
             return SupabaseLead(**self._map_from_supabase(res.json()[0]))
         return None
 
+    async def find_by_email_or_phone(
+        self, email: str | None, phone: str | None
+    ) -> SupabaseLead | None:
+        if not email and not phone:
+            return None
+        or_clauses = []
+        if email:
+            or_clauses.append(f"primary_email.eq.{email}")
+        if phone:
+            or_clauses.append(f"primary_phone.eq.{phone}")
+
+        params = {"or": f"({','.join(or_clauses)})", "select": "*", "limit": "1"}
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.get(
+                f"{self.base_url}/rest/v1/leads",
+                headers=self.headers,
+                params=params,
+                timeout=10.0,
+            )
+        if res.status_code == 200 and res.json():
+            return SupabaseLead(**self._map_from_supabase(res.json()[0]))
+        return None
+
     async def create(self, lead_data: dict) -> SupabaseLead:
         if "id" not in lead_data or not lead_data["id"]:
             lead_data["id"] = str(uuid4())
