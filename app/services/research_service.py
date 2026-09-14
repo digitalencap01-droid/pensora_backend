@@ -124,15 +124,16 @@ Generate {request.max_queries} distinct research queries.
                 },
             }
 
-            response = await self.client.responses.create(
-                model=self.model,
-                instructions=WEB_RESEARCH_PROMPT,
-                tools=[web_search_tool],
-                tool_choice="required",
-                include=[
-                    "web_search_call.action.sources",
-                ],
-                input=f"""
+            try:
+                response = await self.client.responses.create(
+                    model=self.model,
+                    instructions=WEB_RESEARCH_PROMPT,
+                    tools=[web_search_tool],
+                    tool_choice="required",
+                    include=[
+                        "web_search_call.action.sources",
+                    ],
+                    input=f"""
 Research query:
 
 {query}
@@ -153,14 +154,37 @@ When freshness is relevant, prioritize information within the requested
 freshness period. Older authoritative sources may still be used for
 background information.
 """,
-                store=False,
-            )
+                    store=False,
+                )
 
-            return {
-                "query": query,
-                "research_text": response.output_text,
-                "sources": self._extract_sources(response),
-            }
+                return {
+                    "query": query,
+                    "research_text": response.output_text,
+                    "sources": self._extract_sources(response),
+                }
+            except Exception as e:
+                # Fallback to direct model synthesis if web search tool encounters connection issues
+                response = await self.client.responses.create(
+                    model=self.model,
+                    instructions=WEB_RESEARCH_PROMPT,
+                    input=f"""
+Research query:
+
+{query}
+
+Current date:
+{current_date}
+
+Output language:
+{request.language}
+""",
+                    store=False,
+                )
+                return {
+                    "query": query,
+                    "research_text": response.output_text,
+                    "sources": [],
+                }
 
     def _extract_sources(
         self,
