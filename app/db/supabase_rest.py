@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -21,12 +23,34 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+_TIMESTAMPTZ_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(\.\d+)?(Z|[+-]\d{2}:\d{2})?$"
+)
+
+
+def _coerce_value(value: Any) -> Any:
+    # Only top-level scalar columns are real Postgres `timestamptz`
+    # values — dicts/lists here are JSONB payload columns and must
+    # pass through untouched (they get parsed by Pydantic elsewhere,
+    # e.g. ArticleResult.model_validate(version.payload)).
+    if isinstance(value, str) and _TIMESTAMPTZ_PATTERN.match(value):
+        return datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+    return value
+
+
 def row(data: dict) -> SimpleNamespace:
     """Wraps a PostgREST JSON row as an attribute-accessible object,
     so the rest of the app can keep using `record.id` / `record.payload`
     instead of `record["id"]` — same shape callers already expect from
-    the old SQLAlchemy ORM rows."""
-    return SimpleNamespace(**data)
+    the old SQLAlchemy ORM rows. Top-level timestamp columns are parsed
+    back into `datetime` objects, matching what the old SQLAlchemy ORM
+    rows gave callers (PostgREST returns everything as JSON strings)."""
+    return SimpleNamespace(
+        **{k: _coerce_value(v) for k, v in data.items()}
+    )
 
 
 class SupabaseRestError(Exception):
