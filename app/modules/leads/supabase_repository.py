@@ -92,19 +92,24 @@ class SupabaseLeadRepository:
 
         sb_data["workspace_id"] = str(data.get("workspace_id") or "00000000-0000-0000-0000-000000000000")
 
-        if "full_name" in data and data["full_name"]:
-            sb_data["full_name"] = data["full_name"]
-            if "first_name" not in data:
-                parts = data["full_name"].strip().split(" ", 1)
-                sb_data["first_name"] = parts[0]
-                if len(parts) > 1:
-                    sb_data["last_name"] = parts[1]
-        if "first_name" in data and data["first_name"]:
-            sb_data["first_name"] = data["first_name"]
-        if "last_name" in data and data["last_name"]:
-            sb_data["last_name"] = data["last_name"]
-        if ("first_name" in data or "last_name" in data) and ("full_name" not in sb_data or not sb_data["full_name"]):
-            sb_data["full_name"] = f"{data.get('first_name') or ''} {data.get('last_name') or ''}".strip()
+        full_name_val = str(data.get("full_name") or "").strip()
+        first_name_val = str(data.get("first_name") or "").strip()
+        last_name_val = str(data.get("last_name") or "").strip()
+
+        if not full_name_val and (first_name_val or last_name_val):
+            full_name_val = f"{first_name_val} {last_name_val}".strip()
+        elif full_name_val and not first_name_val:
+            parts = full_name_val.split(" ", 1)
+            first_name_val = parts[0]
+            if len(parts) > 1:
+                last_name_val = parts[1]
+
+        if full_name_val:
+            sb_data["full_name"] = full_name_val
+        if first_name_val:
+            sb_data["first_name"] = first_name_val
+        if last_name_val:
+            sb_data["last_name"] = last_name_val
 
         if "email" in data and data["email"]:
             sb_data["primary_email"] = data["email"]
