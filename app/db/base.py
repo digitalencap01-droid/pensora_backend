@@ -29,7 +29,7 @@ NAMING_CONVENTION = {
 
 metadata = MetaData(
     naming_convention=NAMING_CONVENTION,
-    schema=settings.db_schema if "postgresql" in settings.database_url else None,
+    schema=settings.db_schema,
 )
 
 
