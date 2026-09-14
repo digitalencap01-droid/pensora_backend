@@ -10,7 +10,6 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.linkedin_repository import linkedin_repository
@@ -179,7 +178,6 @@ class LinkedInService:
 
     async def handle_callback(
         self,
-        session: AsyncSession,
         code: str,
         state: str,
     ) -> str:
@@ -205,7 +203,6 @@ class LinkedInService:
         refresh_token = token_data.get("refresh_token")
 
         await linkedin_repository.upsert_connection(
-            session=session,
             linkedin_member_id=userinfo["sub"],
             linkedin_name=userinfo.get("name"),
             linkedin_email=userinfo.get("email"),
@@ -273,9 +270,8 @@ class LinkedInService:
 
     async def get_status(
         self,
-        session: AsyncSession,
     ) -> LinkedInStatus:
-        connection = await linkedin_repository.get_connection(session)
+        connection = await linkedin_repository.get_connection()
 
         if connection is None:
             return LinkedInStatus(connected=False)
@@ -287,15 +283,13 @@ class LinkedInService:
 
     async def disconnect(
         self,
-        session: AsyncSession,
     ) -> None:
-        await linkedin_repository.delete_connection(session)
+        await linkedin_repository.delete_connection()
 
     # ---- generate (Write page: topic -> draft, before publishing) ----
 
     async def generate_content(
         self,
-        session: AsyncSession,
         content_type: LinkedInContentType,
         topic: str,
         tone: str | None,
@@ -310,7 +304,6 @@ class LinkedInService:
         )
 
         grounding_context = await self._build_grounding_context(
-            session=session,
             topic=topic,
             document_id=document_id,
             image_batch_id=image_batch_id,
@@ -386,14 +379,12 @@ class LinkedInService:
 
     async def _build_grounding_context(
         self,
-        session: AsyncSession,
         topic: str,
         document_id: UUID | None,
         image_batch_id: UUID | None,
     ) -> str | None:
         if document_id is not None:
             document = await content_repository.get_document(
-                session=session,
                 document_id=document_id,
             )
             if document is None:
@@ -412,7 +403,6 @@ class LinkedInService:
                 )
 
             research = await document_research_service.research(
-                session=session,
                 document=document,
                 request=DocumentResearchRequest(
                     document_id=document.id,
@@ -426,7 +416,6 @@ class LinkedInService:
 
         if image_batch_id is not None:
             batch = await content_repository.get_image_batch(
-                session=session,
                 batch_id=image_batch_id,
             )
             if batch is None:
@@ -436,7 +425,6 @@ class LinkedInService:
                 )
 
             images = await content_repository.list_batch_images(
-                session=session,
                 batch_id=batch.id,
             )
             if not images:
@@ -641,9 +629,8 @@ class LinkedInService:
 
     async def _require_active_connection(
         self,
-        session: AsyncSession,
     ) -> LinkedInConnection:
-        connection = await linkedin_repository.get_connection(session)
+        connection = await linkedin_repository.get_connection()
 
         if connection is None:
             raise HTTPException(
@@ -696,7 +683,6 @@ class LinkedInService:
 
     async def publish_article(
         self,
-        session: AsyncSession,
         article_title: str,
         article_summary: str,
         article_url: str,
@@ -704,7 +690,7 @@ class LinkedInService:
     ) -> LinkedInPublishResult:
         self._require_config()
 
-        connection = await self._require_active_connection(session)
+        connection = await self._require_active_connection()
         access_token = decrypt_token(connection.access_token_encrypted)
 
         article_content: dict = {
@@ -735,7 +721,6 @@ class LinkedInService:
 
     async def publish_post(
         self,
-        session: AsyncSession,
         text: str,
     ) -> LinkedInPublishResult:
         """Publishes a plain text post (no link/article preview) —
@@ -743,7 +728,7 @@ class LinkedInService:
         the "post" and "article" (long-form text) content types."""
         self._require_config()
 
-        connection = await self._require_active_connection(session)
+        connection = await self._require_active_connection()
         access_token = decrypt_token(connection.access_token_encrypted)
 
         body = {

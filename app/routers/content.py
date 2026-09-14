@@ -3,18 +3,12 @@ from fastapi import (
     Depends,
     HTTPException,
 )
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
 
 from app.core.exceptions import (
     ContentPipelineError,
 )
 from app.core.rate_limit import (
     enforce_generate_rate_limit,
-)
-from app.db.database import (
-    get_db_session,
 )
 from app.schemas.content import (
     ContentGenerateRequest,
@@ -40,15 +34,11 @@ router = APIRouter(
 )
 async def generate_content(
     request: ContentGenerateRequest,
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ContentGenerateResult:
     try:
         return (
             await content_pipeline_service.generate(
                 request=request,
-                session=session,
             )
         )
     except ContentPipelineError as exc:

@@ -1,9 +1,5 @@
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
-
 from app.core.exceptions import (
     ContentPipelineError,
 )
@@ -79,11 +75,9 @@ class ContentPipelineService:
     async def generate(
         self,
         request: ContentGenerateRequest,
-        session: AsyncSession,
     ) -> ContentGenerateResult:
         project = (
             await content_repository.create_project(
-                session=session,
                 request=request,
             )
         )
@@ -92,7 +86,6 @@ class ContentPipelineService:
 
         try:
             await content_repository.update_project_stage(
-                session=session,
                 project_id=project.id,
                 stage="research",
             )
@@ -101,13 +94,11 @@ class ContentPipelineService:
                 research,
                 grounding_image_urls,
             ) = await self._run_research(
-                session=session,
                 project_id=project.id,
                 request=request,
             )
 
             await content_repository.save_research(
-                session=session,
                 project_id=project.id,
                 research=research,
             )
@@ -115,7 +106,6 @@ class ContentPipelineService:
             stage = "keyword_strategy"
 
             await content_repository.update_project_stage(
-                session=session,
                 project_id=project.id,
                 stage=stage,
             )
@@ -141,7 +131,6 @@ class ContentPipelineService:
             )
 
             await content_repository.save_keywords(
-                session=session,
                 project_id=project.id,
                 keywords=keywords,
             )
@@ -149,7 +138,6 @@ class ContentPipelineService:
             stage = "content_brief"
 
             await content_repository.update_project_stage(
-                session=session,
                 project_id=project.id,
                 stage=stage,
             )
@@ -181,7 +169,6 @@ class ContentPipelineService:
             )
 
             await content_repository.save_content_brief(
-                session=session,
                 project_id=project.id,
                 brief=content_brief,
             )
@@ -189,7 +176,6 @@ class ContentPipelineService:
             stage = "article_generation"
 
             await content_repository.update_project_stage(
-                session=session,
                 project_id=project.id,
                 stage=stage,
             )
@@ -264,7 +250,6 @@ class ContentPipelineService:
                 article_record,
                 article_version_record,
             ) = await content_repository.save_article(
-                session=session,
                 project_id=project.id,
                 article=article,
             )
@@ -272,7 +257,6 @@ class ContentPipelineService:
             stage = "seo"
 
             await content_repository.update_project_stage(
-                session=session,
                 project_id=project.id,
                 stage=stage,
             )
@@ -333,7 +317,6 @@ class ContentPipelineService:
 
             seo_record = (
                 await content_repository.save_seo(
-                    session=session,
                     project_id=project.id,
                     article_version_id=(
                         article_version_record.id
@@ -345,7 +328,6 @@ class ContentPipelineService:
             stage = "html_rendering"
 
             await content_repository.update_project_stage(
-                session=session,
                 project_id=project.id,
                 stage=stage,
             )
@@ -373,7 +355,6 @@ class ContentPipelineService:
             )
 
             await content_repository.save_generated_html(
-                session=session,
                 project_id=project.id,
                 article_version_id=(
                     article_version_record.id
@@ -385,7 +366,6 @@ class ContentPipelineService:
             )
 
             await content_repository.mark_project_completed(
-                session=session,
                 project_id=project.id,
             )
 
@@ -405,7 +385,6 @@ class ContentPipelineService:
             )
         except Exception as exc:
             await content_repository.mark_project_failed(
-                session=session,
                 project_id=project.id,
                 stage=stage,
                 message=str(exc),
@@ -424,20 +403,17 @@ class ContentPipelineService:
 
     async def _run_research(
         self,
-        session: AsyncSession,
         project_id: UUID,
         request: ContentGenerateRequest,
     ) -> tuple[ResearchResult, list[str]]:
         if request.image_batch_id:
             return await self._run_image_research(
-                session=session,
                 project_id=project_id,
                 request=request,
             )
 
         if request.document_id:
             research = await self._run_document_research(
-                session=session,
                 project_id=project_id,
                 request=request,
             )
@@ -458,12 +434,10 @@ class ContentPipelineService:
 
     async def _run_document_research(
         self,
-        session: AsyncSession,
         project_id: UUID,
         request: ContentGenerateRequest,
     ) -> ResearchResult:
         document = await content_repository.get_document(
-            session=session,
             document_id=request.document_id,
         )
 
@@ -479,14 +453,12 @@ class ContentPipelineService:
             )
 
         await content_repository.link_document_to_project(
-            session=session,
             document_id=document.id,
             project_id=project_id,
         )
 
         document_research = (
             await document_research_service.research(
-                session=session,
                 document=document,
                 request=DocumentResearchRequest(
                     document_id=document.id,
@@ -521,12 +493,10 @@ class ContentPipelineService:
 
     async def _run_image_research(
         self,
-        session: AsyncSession,
         project_id: UUID,
         request: ContentGenerateRequest,
     ) -> tuple[ResearchResult, list[str]]:
         batch = await content_repository.get_image_batch(
-            session=session,
             batch_id=request.image_batch_id,
         )
 
@@ -536,7 +506,6 @@ class ContentPipelineService:
             )
 
         images = await content_repository.list_batch_images(
-            session=session,
             batch_id=batch.id,
         )
 
@@ -546,7 +515,6 @@ class ContentPipelineService:
             )
 
         await content_repository.link_image_batch_to_project(
-            session=session,
             batch_id=batch.id,
             project_id=project_id,
         )

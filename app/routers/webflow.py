@@ -1,9 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Query
 
-from app.db.database import get_db_session
 from app.schemas.webflow import (
     WebflowCollectionsResult,
     WebflowConnectRequest,
@@ -22,10 +20,8 @@ router = APIRouter(
 
 
 @router.get("/status", response_model=WebflowStatus)
-async def get_webflow_status(
-    session: AsyncSession = Depends(get_db_session),
-) -> WebflowStatus:
-    return await webflow_service.get_status(session=session)
+async def get_webflow_status() -> WebflowStatus:
+    return await webflow_service.get_status()
 
 
 @router.get("/sites", response_model=WebflowSitesResult)
@@ -53,16 +49,13 @@ async def list_webflow_fields(
 @router.post("/connect", response_model=WebflowStatus)
 async def connect_webflow(
     request: WebflowConnectRequest,
-    session: AsyncSession = Depends(get_db_session),
 ) -> WebflowStatus:
-    return await webflow_service.connect(session=session, request=request)
+    return await webflow_service.connect(request=request)
 
 
 @router.delete("/disconnect", status_code=204)
-async def disconnect_webflow(
-    session: AsyncSession = Depends(get_db_session),
-) -> None:
-    await webflow_service.disconnect(session=session)
+async def disconnect_webflow() -> None:
+    await webflow_service.disconnect()
 
 
 @router.post(
@@ -71,10 +64,8 @@ async def disconnect_webflow(
 )
 async def publish_project_to_webflow(
     project_id: UUID,
-    session: AsyncSession = Depends(get_db_session),
 ) -> WebflowPublishResult:
     return await webflow_service.publish_project(
-        session=session,
         project_id=project_id,
     )
 
@@ -85,9 +76,7 @@ async def publish_project_to_webflow(
 )
 async def go_live_on_webflow(
     project_id: UUID,
-    session: AsyncSession = Depends(get_db_session),
 ) -> WebflowPublishResult:
     return await webflow_service.go_live(
-        session=session,
         project_id=project_id,
     )

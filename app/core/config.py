@@ -41,9 +41,11 @@ class Settings(BaseSettings):
     # -----------------------
 
     # Service role key (Project Settings -> API -> service_role, secret).
-    # Storage uploads go through this — same trust model as the DB
-    # connection, which already connects as the table owner and bypasses
-    # RLS. Leave blank to disable document upload entirely.
+    # This app talks to Postgres exclusively through Supabase's REST API
+    # (PostgREST) — see app/db/supabase_rest.py — rather than a direct
+    # database connection, so this key is required for EVERY read/write,
+    # not just Storage uploads. It bypasses Row-Level Security the same
+    # way a direct superuser connection would.
     supabase_service_role_key: str | None = None
     document_storage_bucket: str = "documents"
     document_max_file_size_mb: int = 20
@@ -118,16 +120,25 @@ class Settings(BaseSettings):
     # Database
     # -----------------------
 
-    supabase_db_url: str
-    supabase_migration_db_url: str | None = None
-    # Used to build public storage URLs for uploaded documents/images
-    # (app/services/document_service.py) — not for auth, which this
-    # app currently runs without.
+    # The app reads/writes Postgres exclusively through Supabase's REST
+    # API (`{supabase_url}/rest/v1`, see app/db/supabase_rest.py) using
+    # supabase_service_role_key above — not a direct Postgres
+    # connection. supabase_url is also used to build public storage
+    # URLs for uploaded documents/images.
     supabase_url: str
-    db_schema: str = "ai_blog"
-    db_echo: bool = False
-    db_pool_size: int = 10
-    db_max_overflow: int = 20
+
+    # PostgREST only exposes the `public` schema by default (see
+    # README.md) — this app's tables live there. Only affects
+    # app/db/base.py's SQLAlchemy metadata (used solely for type
+    # definitions in app/db/models.py) and Alembic, both vestigial
+    # now that persistence goes through the REST API.
+    db_schema: str = "public"
+
+    # Optional — only needed if you run Alembic directly against
+    # Postgres yourself (migrations/ is not used by the app at
+    # runtime). Leave blank otherwise.
+    supabase_db_url: str | None = None
+    supabase_migration_db_url: str | None = None
 
     # -----------------------
     # Pydantic Settings
@@ -153,16 +164,30 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        if not self.supabase_db_url:
+            raise ValueError(
+                "SUPABASE_DB_URL is not set — it's only "
+                "needed to run Alembic directly against "
+                "Postgres, which the app itself doesn't "
+                "require."
+            )
         return self._normalize_database_url(
             self.supabase_db_url
         )
 
     @property
     def migration_database_url(self) -> str:
-        return self._normalize_database_url(
+        raw = (
             self.supabase_migration_db_url
             or self.supabase_db_url
         )
+        if not raw:
+            raise ValueError(
+                "SUPABASE_DB_URL / SUPABASE_MIGRATION_DB_URL "
+                "are not set — required only to run Alembic "
+                "directly against Postgres."
+            )
+        return self._normalize_database_url(raw)
 
     @property
     def database_uses_external_pooler(self) -> bool:

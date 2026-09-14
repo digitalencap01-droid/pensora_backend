@@ -1,8 +1,7 @@
 from datetime import datetime
+from types import SimpleNamespace
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.db.models import LinkedInConnection
+from app.db.supabase_rest import row, supabase_rest
 
 
 # Single global connection row — see the comment above LinkedInConnection.
@@ -12,13 +11,15 @@ _SINGLETON_ID = 1
 class LinkedInRepository:
     async def get_connection(
         self,
-        session: AsyncSession,
-    ) -> LinkedInConnection | None:
-        return await session.get(LinkedInConnection, _SINGLETON_ID)
+    ) -> SimpleNamespace | None:
+        data = await supabase_rest.select_one(
+            "linkedin_connections",
+            params={"id": f"eq.{_SINGLETON_ID}"},
+        )
+        return row(data) if data else None
 
     async def upsert_connection(
         self,
-        session: AsyncSession,
         linkedin_member_id: str,
         linkedin_name: str | None,
         linkedin_email: str | None,
@@ -26,36 +27,36 @@ class LinkedInRepository:
         refresh_token_encrypted: str | None,
         scope: str,
         token_expires_at: datetime,
-    ) -> LinkedInConnection:
-        connection = await self.get_connection(session)
+    ) -> SimpleNamespace:
+        data = {
+            "id": _SINGLETON_ID,
+            "linkedin_member_id": linkedin_member_id,
+            "linkedin_name": linkedin_name,
+            "linkedin_email": linkedin_email,
+            "access_token_encrypted": (
+                access_token_encrypted
+            ),
+            "refresh_token_encrypted": (
+                refresh_token_encrypted
+            ),
+            "scope": scope,
+            "token_expires_at": (
+                token_expires_at.isoformat()
+            ),
+        }
 
-        if connection is None:
-            connection = LinkedInConnection(id=_SINGLETON_ID)
-            session.add(connection)
+        result = await supabase_rest.insert_one(
+            "linkedin_connections",
+            data,
+            on_conflict="id",
+        )
+        return row(result)
 
-        connection.linkedin_member_id = linkedin_member_id
-        connection.linkedin_name = linkedin_name
-        connection.linkedin_email = linkedin_email
-        connection.access_token_encrypted = access_token_encrypted
-        connection.refresh_token_encrypted = refresh_token_encrypted
-        connection.scope = scope
-        connection.token_expires_at = token_expires_at
-
-        await session.commit()
-        await session.refresh(connection)
-        return connection
-
-    async def delete_connection(
-        self,
-        session: AsyncSession,
-    ) -> None:
-        connection = await self.get_connection(session)
-
-        if connection is None:
-            return
-
-        await session.delete(connection)
-        await session.commit()
+    async def delete_connection(self) -> None:
+        await supabase_rest.delete(
+            "linkedin_connections",
+            params={"id": f"eq.{_SINGLETON_ID}"},
+        )
 
 
 linkedin_repository = LinkedInRepository()

@@ -2,14 +2,11 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    Depends,
     File,
     HTTPException,
     UploadFile,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db_session
 from app.db.repository import content_repository
 from app.schemas.image_upload import (
     ImageBatchUploadResult,
@@ -35,9 +32,6 @@ router = APIRouter(
 )
 async def upload_images(
     files: list[UploadFile] = File(...),
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> ImageBatchUploadResult:
     prepared = [
         (
@@ -53,7 +47,6 @@ async def upload_images(
         batch = (
             await image_upload_service
             .process_batch_upload(
-                session=session,
                 files=prepared,
             )
         )
@@ -64,7 +57,6 @@ async def upload_images(
         ) from exc
 
     images = await content_repository.list_batch_images(
-        session=session,
         batch_id=batch.id,
     )
 
@@ -93,15 +85,11 @@ async def upload_images(
 async def replace_image(
     image_id: UUID,
     file: UploadFile = File(...),
-    session: AsyncSession = Depends(
-        get_db_session
-    ),
 ) -> UploadedImageSummary:
     content = await file.read()
 
     try:
         image = await image_upload_service.replace_image(
-            session=session,
             image_id=image_id,
             content=content,
         )

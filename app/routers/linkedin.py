@@ -1,7 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.db.database import get_db_session
+from fastapi import APIRouter, Query, Request
 from app.schemas.linkedin import (
     LinkedInConnectResult,
     LinkedInGenerateRequest,
@@ -23,10 +20,8 @@ router = APIRouter(
 
 
 @router.get("/status", response_model=LinkedInStatus)
-async def get_linkedin_status(
-    session: AsyncSession = Depends(get_db_session),
-) -> LinkedInStatus:
-    return await linkedin_service.get_status(session=session)
+async def get_linkedin_status() -> LinkedInStatus:
+    return await linkedin_service.get_status()
 
 
 @router.get("/connect", response_model=LinkedInConnectResult)
@@ -42,19 +37,15 @@ async def connect_linkedin(
 
 
 @router.delete("/disconnect", status_code=204)
-async def disconnect_linkedin(
-    session: AsyncSession = Depends(get_db_session),
-) -> None:
-    await linkedin_service.disconnect(session=session)
+async def disconnect_linkedin() -> None:
+    await linkedin_service.disconnect()
 
 
 @router.post("/publish", response_model=LinkedInPublishResult)
 async def publish_to_linkedin(
     request: LinkedInPublishRequest,
-    session: AsyncSession = Depends(get_db_session),
 ) -> LinkedInPublishResult:
     return await linkedin_service.publish_article(
-        session=session,
         article_title=request.article_title,
         article_summary=request.article_summary,
         article_url=str(request.article_url),
@@ -65,10 +56,8 @@ async def publish_to_linkedin(
 @router.post("/generate", response_model=LinkedInGenerateResult)
 async def generate_linkedin_content(
     request: LinkedInGenerateRequest,
-    session: AsyncSession = Depends(get_db_session),
 ) -> LinkedInGenerateResult:
     text = await linkedin_service.generate_content(
-        session=session,
         content_type=request.content_type,
         topic=request.topic,
         tone=request.tone,
@@ -103,9 +92,7 @@ async def suggest_linkedin_hashtags(
 @router.post("/publish-post", response_model=LinkedInPublishResult)
 async def publish_linkedin_post(
     request: LinkedInPostPublishRequest,
-    session: AsyncSession = Depends(get_db_session),
 ) -> LinkedInPublishResult:
     return await linkedin_service.publish_post(
-        session=session,
         text=request.text,
     )

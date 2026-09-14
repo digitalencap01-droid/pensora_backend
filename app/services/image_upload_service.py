@@ -4,7 +4,6 @@ import io
 from uuid import UUID, uuid4
 
 from PIL import Image
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import ImageBatch, UploadedImageRecord
@@ -20,7 +19,6 @@ SUPPORTED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
 class ImageUploadService:
     async def process_batch_upload(
         self,
-        session: AsyncSession,
         files: list[tuple[str, bytes, str]],
     ) -> ImageBatch:
         from app.db.repository import content_repository
@@ -107,7 +105,6 @@ class ImageUploadService:
             )
 
         return await content_repository.save_image_batch(
-            session=session,
             batch_id=batch_id,
             storage_bucket=(
                 settings.document_images_bucket
@@ -117,14 +114,12 @@ class ImageUploadService:
 
     async def replace_image(
         self,
-        session: AsyncSession,
         image_id: UUID,
         content: bytes,
     ) -> UploadedImageRecord:
         from app.db.repository import content_repository
 
         existing = await content_repository.get_uploaded_image(
-            session=session,
             image_id=image_id,
         )
 
@@ -167,7 +162,6 @@ class ImageUploadService:
         )
 
         return await content_repository.update_uploaded_image(
-            session=session,
             image_id=existing.id,
             storage_path=storage_path,
             public_url=public_url,
