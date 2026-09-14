@@ -1,16 +1,16 @@
 from uuid import UUID, uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
-from app.modules.leads.imports.detector import FileFormatDetector
-from app.modules.leads.imports.mapping_service import MappingService
-from app.modules.leads.imports.parser_factory import ParserFactory
-from app.modules.leads.imports.schemas import (
+from app.modules.leads.import_detector import FileFormatDetector
+from app.modules.leads.import_mapping import MappingService
+from app.modules.leads.import_parsers import ParserFactory
+from app.modules.leads.import_schemas import (
     FileUploadResponse,
     ImportSessionStatusResponse,
     PreviewMappingResponse,
     StartImportRequest,
 )
-from app.modules.leads.imports.service import UPLOAD_CACHE, UniversalLeadImportService
+from app.modules.leads.import_service import UPLOAD_CACHE, UniversalLeadImportService
 from app.modules.leads.schemas import (
     LeadCreate,
     LeadListResponse,

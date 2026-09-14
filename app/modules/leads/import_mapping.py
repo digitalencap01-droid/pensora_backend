@@ -35,15 +35,6 @@ CANONICAL_FIELD_ALIASES = {
 class MappingService:
     @staticmethod
     def auto_map_headers(headers: list[str]) -> dict[str, dict]:
-        """
-        Returns mapping structure for each header:
-        {
-          "Customer Business": {
-             "suggested_field": "company_name",
-             "confidence": 0.95
-          }
-        }
-        """
         mappings = {}
 
         for header in headers:
@@ -56,7 +47,6 @@ class MappingService:
                     mapped_field = target_field
                     confidence = 0.98
                     break
-                # Partial fuzzy match fallback
                 for alias in aliases:
                     if alias in normalized or normalized in alias:
                         mapped_field = target_field

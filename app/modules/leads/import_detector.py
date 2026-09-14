@@ -7,7 +7,6 @@ class FileFormatDetector:
         ext = os.path.splitext(filename)[1].lower().strip(".")
         confidence = 0.95
 
-        # Inspect content header magic bytes / strings
         sample = file_bytes[:2048]
 
         if sample.startswith(b"PK\x03\x04") or ext in ["xlsx", "xlsm", "xltx", "xltm"]:

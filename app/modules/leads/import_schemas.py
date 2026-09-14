@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class SheetInfo(BaseModel):
@@ -37,7 +37,7 @@ class PreviewMappingResponse(BaseModel):
 
 class ConfirmMappingRequest(BaseModel):
     selected_sheet: str | None = None
-    field_mappings: dict[str, str]  # Header -> Canonical Field Name
+    field_mappings: dict[str, str]
 
 
 class ValidationSummaryResponse(BaseModel):
@@ -51,15 +51,15 @@ class ValidationSummaryResponse(BaseModel):
 
 class StartImportRequest(BaseModel):
     field_mappings: dict[str, str]
-    duplicate_strategy: str = "add_and_update"  # "add_and_update", "add_new_only", "update_only"
-    import_mode: str = "all"  # "all", "valid_only"
+    duplicate_strategy: str = "add_and_update"
+    import_mode: str = "all"
 
 
 class ImportSessionStatusResponse(BaseModel):
     id: UUID
     workspace_id: UUID
     filename: str
-    status: str  # "uploaded", "mapped", "processing", "completed", "completed_with_errors", "failed"
+    status: str
     detected_type: str
     total_rows: int
     processed_rows: int
