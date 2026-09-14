@@ -1,3 +1,4 @@
+import httpx
 from openai import AsyncOpenAI
 
 from app.core.config import settings
@@ -17,6 +18,7 @@ class OpenAIService:
             api_key=api_key,
             max_retries=5,
             timeout=120.0,
+            http_client=httpx.AsyncClient(headers={"Accept-Encoding": "gzip, deflate"}),
         )
 
     @property
