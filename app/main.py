@@ -1,4 +1,9 @@
+import asyncio
 import logging
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +28,9 @@ from app.routers.images import (
 )
 from app.routers.keywords import (
     router as keywords_router,
+)
+from app.routers.leads import (
+    router as leads_router,
 )
 from app.routers.linkedin import (
     router as linkedin_router,
@@ -99,6 +107,7 @@ app.include_router(seo_router)
 app.include_router(html_router)
 app.include_router(linkedin_router)
 app.include_router(webflow_router)
+app.include_router(leads_router)
 
 # Mounted as a sub-app (not include_router) — see
 # app/routers/linkedin_callback.py.
