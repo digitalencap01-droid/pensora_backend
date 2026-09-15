@@ -160,6 +160,46 @@ class UniversalLeadImportService:
                     error_log.append({"row": row_idx, "errors": errors})
                     continue
 
+                email = mapped_data.get("email")
+                phone = mapped_data.get("phone")
+                name_val = mapped_data.get("full_name") or f"{mapped_data.get('first_name') or ''} {mapped_data.get('last_name') or ''}".strip()
+                company_val = mapped_data.get("company_name")
+
+                # Comprehensive deduplication check: email, phone, or name + company
+                existing = await sb_repo.find_existing_lead(
+                    email=email,
+                    phone=phone,
+                    name=name_val if name_val else None,
+                    company=company_val if company_val else None,
+                )
+                if existing:
+                    duplicates += 1
+                    if duplicate_strategy == "skip":
+                        continue
+                    elif duplicate_strategy in ["add_and_update", "update"]:
+                        update_payload = {
+                            "first_name": mapped_data.get("first_name") or existing.first_name,
+                            "last_name": mapped_data.get("last_name") or existing.last_name,
+                            "full_name": name_val or existing.full_name,
+                            "email": email or existing.email,
+                            "phone": phone or existing.phone,
+                            "company_name": company_val or existing.company_name,
+                            "job_title": mapped_data.get("job_title") or existing.job_title,
+                            "status": mapped_data.get("status") or existing.status,
+                            "source": mapped_data.get("source") or existing.source,
+                            "lead_score": mapped_data.get("lead_score") if mapped_data.get("lead_score") is not None else existing.lead_score,
+                        }
+                        if mapped_data.get("tags"):
+                            merged_tags = list(set((existing.tags or []) + mapped_data["tags"]))
+                            update_payload["tags"] = merged_tags
+                        if custom_fields:
+                            merged_custom = {**(existing.custom_fields_json or {}), **custom_fields}
+                            update_payload["custom_fields_json"] = merged_custom
+
+                        await sb_repo.update(existing.id, update_payload)
+                        successful += 1
+                        continue
+
                 new_lead = {
                     "id": str(uuid4()),
                     "workspace_id": str(workspace_id),

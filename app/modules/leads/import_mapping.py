@@ -42,18 +42,23 @@ class MappingService:
             mapped_field = None
             confidence = 0.0
 
+            # 1. Exact match check across all canonical fields
             for target_field, aliases in CANONICAL_FIELD_ALIASES.items():
-                if normalized in aliases:
+                if normalized in aliases or header.lower().strip() in aliases:
                     mapped_field = target_field
                     confidence = 0.98
                     break
-                for alias in aliases:
-                    if alias in normalized or normalized in alias:
-                        mapped_field = target_field
-                        confidence = 0.85
+
+            # 2. Substring match fallback
+            if not mapped_field:
+                for target_field, aliases in CANONICAL_FIELD_ALIASES.items():
+                    for alias in aliases:
+                        if len(alias) > 3 and (alias in normalized or normalized in alias):
+                            mapped_field = target_field
+                            confidence = 0.85
+                            break
+                    if mapped_field:
                         break
-                if mapped_field:
-                    break
 
             if mapped_field:
                 mappings[header] = {

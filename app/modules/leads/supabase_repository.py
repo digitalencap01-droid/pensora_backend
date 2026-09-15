@@ -212,6 +212,44 @@ class SupabaseLeadRepository:
             return SupabaseLead(**self._map_from_supabase(res.json()[0]))
         return None
 
+    async def find_existing_lead(
+        self,
+        email: str | None = None,
+        phone: str | None = None,
+        name: str | None = None,
+        company: str | None = None,
+    ) -> SupabaseLead | None:
+        or_clauses = []
+        clean_email = email.strip() if email and email.strip() else None
+        clean_phone = phone.strip() if phone and phone.strip() else None
+        clean_name = name.strip() if name and name.strip() else None
+        clean_company = company.strip() if company and company.strip() else None
+
+        if clean_email:
+            or_clauses.append(f"primary_email.ilike.{clean_email}")
+        if clean_phone:
+            or_clauses.append(f"primary_phone.eq.{clean_phone}")
+        if clean_name:
+            if clean_company:
+                or_clauses.append(f"and(full_name.ilike.{clean_name},company_name.ilike.{clean_company})")
+            else:
+                or_clauses.append(f"full_name.ilike.{clean_name}")
+
+        if not or_clauses:
+            return None
+
+        params = {"or": f"({','.join(or_clauses)})", "select": "*", "limit": "1"}
+        async with httpx.AsyncClient(verify=False) as client:
+            res = await client.get(
+                f"{self.base_url}/rest/v1/leads",
+                headers=self.headers,
+                params=params,
+                timeout=10.0,
+            )
+        if res.status_code == 200 and res.json():
+            return SupabaseLead(**self._map_from_supabase(res.json()[0]))
+        return None
+
     async def create(self, lead_data: dict) -> SupabaseLead:
         if "id" not in lead_data or not lead_data["id"]:
             lead_data["id"] = str(uuid4())
